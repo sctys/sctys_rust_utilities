@@ -16,6 +16,9 @@ use log4rs::encode::pattern::PatternEncoder;
 use log4rs::config::{Appender, Logger, Root};
 use log4rs::{Config, Handle};
 
+const DEFAULT_MAX_FILE_SIZE_MB: u128 = 10;
+const DEFAULT_ROLLER_COUNT: u32 = 10;
+
 
 pub struct ProjectLogger {
     logger_name: String,
@@ -29,7 +32,7 @@ pub struct ProjectLogger {
 
 impl ProjectLogger {
 
-    pub fn new_logger(logger_path: String, logger_name: String, max_file_size_mb: u128, roller_count: u32) -> Self {
+    pub fn new_logger(logger_path: String, logger_name: &str) -> Self {
         let error_logger_name = format!("{}_error", logger_name);
         let standard_logger_file_name = format!("{}.log", logger_name);
         let error_logger_file_name = format!("{}.log", &error_logger_name);
@@ -37,8 +40,8 @@ impl ProjectLogger {
         let full_error_logger_path_file = format!("{}/{}", logger_path, &error_logger_file_name);
         let archive_logger_file_name = standard_logger_file_name.replace(".log", "_log_{}.gz");
         Self {
-            logger_name, error_logger_name, full_logger_path_file, full_error_logger_path_file, 
-            archive_logger_file_name, max_file_size_mb, roller_count
+            logger_name: logger_name.to_owned(), error_logger_name, full_logger_path_file, full_error_logger_path_file, 
+            archive_logger_file_name, max_file_size_mb: DEFAULT_MAX_FILE_SIZE_MB, roller_count: DEFAULT_ROLLER_COUNT
         }
     }
 
@@ -107,5 +110,13 @@ impl ProjectLogger {
 
     pub fn get_error_logger_name(&self) -> &String {
         &self.error_logger_name
+    }
+
+    pub fn set_max_file_size_mb(&mut self, max_file_size_mb: u128) {
+        self.max_file_size_mb = max_file_size_mb
+    }
+
+    pub fn set_roller_count(&mut self, roller_count: u32) {
+        self.roller_count = roller_count
     }
 }
