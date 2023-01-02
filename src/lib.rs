@@ -1,5 +1,5 @@
-mod logger;
-mod utilities_function;
+pub mod logger;
+pub mod utilities_function;
 
 
 #[cfg(test)]
