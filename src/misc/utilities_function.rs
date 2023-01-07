@@ -7,7 +7,7 @@ where
 
 #[macro_export]
 macro_rules! function_name {
-    () => {{
+    ($full_name:literal) => {{
         fn f() {}
         fn type_name_of<T>(_: T) -> &'static str {
             std::any::type_name::<T>()
@@ -15,11 +15,14 @@ macro_rules! function_name {
         let name = type_name_of(f);
 
         // Find and cut the rest of the path
-        let func_name = match &name[..name.len() - 3].rfind(':') {
-            Some(pos) => &name[pos + 1..name.len() - 3],
-            None => &name[..name.len() - 3],
-        };
-        func_name
+        if $full_name {
+            &name[..name.len() - 3]
+        } else {
+            match &name[..name.len() - 3].rfind(':') {
+                Some(pos) => &name[pos + 1..name.len() - 3],
+                None => &name[..name.len() - 3],
+            }
+        }
     }};
 }
 
@@ -35,3 +38,38 @@ macro_rules! timeit {
 
 pub use function_name;
 pub use timeit;
+
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_get_function_name() {
+        let func_name = get_function_name(test_get_current_function_name);
+        assert_eq!(func_name, "sctys_rust_utilities::misc::utilities_function::tests::test_get_current_function_name")
+    }
+
+    #[test]
+    fn test_get_current_function_name() {
+        let expected_func_name = "test_get_current_function_name";
+        let func_name = function_name!(false);
+        assert_eq!(expected_func_name, func_name)
+    }
+
+    #[test]
+    fn test_timeit() {
+        fn looping_sum(count: u64) -> u64 {
+            let mut total: u64 = 0;
+            for i in 1..(count + 1) {
+                total += i;
+            }
+            total
+        }
+        let num: u64 = 100000;
+        let expected_total = num / 2 * (1 + num);
+        let cal_total = timeit!(looping_sum(num));
+        assert_eq!(expected_total, cal_total)
+    }
+}

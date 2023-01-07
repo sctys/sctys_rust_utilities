@@ -120,3 +120,24 @@ impl ProjectLogger {
         self.roller_count = roller_count
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use std::env;
+
+    #[test]
+    fn test_logger() {
+        let logger_name = "test";
+        let logger_path = format!("{}{}", env::var("SCTYS_PROJECT").unwrap(), "/Log/log_sctys_rust_utilities");
+        let logger = ProjectLogger::new_logger(logger_path, logger_name);
+        let _handle = logger.set_logger();
+        logger.log_trace(&format!("This is trace from {}", logger.get_logger_name()));
+        logger.log_debug(&format!("This is debug from {}", logger.get_logger_name()));
+        logger.log_info(&format!("This is info from {}", logger.get_logger_name()));
+        logger.log_warn(&format!("This is warn from {}", logger.get_logger_name()));
+        logger.log_error(&format!("This is error from {}", logger.get_logger_name()));
+        assert!(true)
+    }
+}
