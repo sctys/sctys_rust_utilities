@@ -1,5 +1,7 @@
 extern crate byte_unit;
 
+use std::path::{Path, PathBuf};
+
 use log::LevelFilter;
 use log::{debug, error, info, trace, warn};
 
@@ -23,8 +25,8 @@ const DEFAULT_ROLLER_COUNT: u32 = 10;
 pub struct ProjectLogger {
     logger_name: String,
     error_logger_name: String,
-    full_logger_path_file: String,
-    full_error_logger_path_file: String,
+    full_logger_path_file: PathBuf,
+    full_error_logger_path_file: PathBuf,
     archive_logger_file_name: String,
     max_file_size_mb: u128,
     roller_count: u32,
@@ -32,12 +34,12 @@ pub struct ProjectLogger {
 
 impl ProjectLogger {
 
-    pub fn new_logger(logger_path: String, logger_name: &str) -> Self {
-        let error_logger_name = format!("{}_error", logger_name);
-        let standard_logger_file_name = format!("{}.log", logger_name);
+    pub fn new_logger(logger_path: &PathBuf, logger_name: &str) -> Self {
+        let error_logger_name = format!("{logger_name}_error");
+        let standard_logger_file_name = format!("{logger_name}.log");
         let error_logger_file_name = format!("{}.log", &error_logger_name);
-        let full_logger_path_file = format!("{}/{}", logger_path, &standard_logger_file_name);
-        let full_error_logger_path_file = format!("{}/{}", logger_path, &error_logger_file_name);
+        let full_logger_path_file = logger_path.join(&standard_logger_file_name);
+        let full_error_logger_path_file = logger_path.join(&error_logger_file_name);
         let archive_logger_file_name = standard_logger_file_name.replace(".log", "_log_{}.gz");
         Self {
             logger_name: logger_name.to_owned(), error_logger_name, full_logger_path_file, full_error_logger_path_file, 
@@ -84,24 +86,24 @@ impl ProjectLogger {
     }
 
     pub fn log_trace(&self, message: &String) {
-        trace!(target: &self.logger_name, "{}", message);
+        trace!(target: &self.logger_name, "{message}");
     }
 
     pub fn log_debug(&self, message: &String) {
-        debug!(target: &self.logger_name, "{}", message);
+        debug!(target: &self.logger_name, "{message}");
     }
 
     pub fn log_info(&self, message: &String) {
-        info!(target: &self.logger_name, "{}", message);
+        info!(target: &self.logger_name, "{message}");
     }
 
     pub fn log_warn(&self, message: &String) {
-        warn!(target: &self.logger_name, "{}", message);
+        warn!(target: &self.logger_name, "{message}");
     }
 
     pub fn log_error(&self, message: &String) {
-        error!(target: &self.logger_name, "{}", message);
-        error!(target: &self.error_logger_name, "{}", message);
+        error!(target: &self.logger_name, "{message}");
+        error!(target: &self.error_logger_name, "{message}");
     }
 
     pub fn get_logger_name(&self) -> &String {
@@ -130,8 +132,8 @@ mod tests {
     #[test]
     fn test_logger() {
         let logger_name = "test";
-        let logger_path = format!("{}{}", env::var("SCTYS_PROJECT").unwrap(), "/Log/log_sctys_rust_utilities");
-        let logger = ProjectLogger::new_logger(logger_path, logger_name);
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap()).join("Log").join("log_sctys_rust_utilities");
+        let logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = logger.set_logger();
         logger.log_trace(&format!("This is trace from {}", logger.get_logger_name()));
         logger.log_debug(&format!("This is debug from {}", logger.get_logger_name()));

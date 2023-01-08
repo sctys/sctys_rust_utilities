@@ -1,6 +1,7 @@
-use std::{thread, time};
+use std::thread;
+use std::time::{Duration, SystemTime};
 use rand::{thread_rng, Rng};
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveTime, NaiveDateTime, Utc, TimeZone};
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveTime, NaiveDateTime, Utc, TimeZone, Datelike};
 use chrono_tz::Tz;
 
 const SEC_TO_HOUR: i32 = 3600;
@@ -9,13 +10,13 @@ const ONE_E6: i64 = 1_000_000;
 const ONE_E9: i64 = 1_000_000_000;
 
 pub fn sleep(time_sec: u64) {
-    thread::sleep(time::Duration::from_secs(time_sec));
+    thread::sleep(Duration::from_secs(time_sec));
 }
 
 pub fn random_sleep(lower_time_sec: f64, upper_time_sec: f64) {
     let mut rng = thread_rng();
     let time_sec = rng.gen_range(lower_time_sec..upper_time_sec);
-    thread::sleep(time::Duration::from_secs_f64(time_sec));
+    thread::sleep(Duration::from_secs_f64(time_sec));
 }
 
 pub enum SecPrecision {
@@ -36,6 +37,40 @@ pub fn timestamp_now(precision: SecPrecision) -> i64 {
         SecPrecision::MicroSec => Utc::now().timestamp_micros(),
         SecPrecision::NanoSec => Utc::now().timestamp_nanos(),
     }
+}
+
+pub fn system_time_now() -> SystemTime {
+    SystemTime::now()
+}
+
+pub fn system_time_to_timestamp(system_time: SystemTime, precision: SecPrecision) -> i64 {
+    match system_time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(st) => match precision {
+            SecPrecision::Sec => st.as_secs() as i64,
+            SecPrecision::MilliSec => st.as_millis() as i64,
+            SecPrecision::MicroSec => st.as_micros() as i64,
+            SecPrecision::NanoSec => st.as_nanos() as i64,
+        },
+        Err(e) => panic!("Unable to convert the system time {system_time:?} to timestamp. {e}")
+    }
+}
+
+pub fn diff_system_time_date_time_sec<T: TimeZone>(system_time: SystemTime, date_time: DateTime<T>) -> i64 {
+    let system_timestamp = system_time_to_timestamp(system_time, SecPrecision::Sec);
+    let date_timestamp = date_time_to_timestamp(date_time, SecPrecision::Sec);
+    system_timestamp - date_timestamp
+}
+
+pub fn get_year<T: TimeZone>(date_time: DateTime<T>) -> i32 {
+    date_time.year()
+}
+
+pub fn get_month<T: TimeZone>(date_time: DateTime<T>) -> u32 {
+    date_time.month()
+}
+
+pub fn get_day<T: TimeZone>(date_time: DateTime<T>) -> u32 {
+    date_time.day()
 }
 
 pub fn naive_date(year: i32, month: u32, day: u32) -> NaiveDate {
