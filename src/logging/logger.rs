@@ -21,7 +21,6 @@ use log4rs::{Config, Handle};
 const DEFAULT_MAX_FILE_SIZE_MB: u128 = 10;
 const DEFAULT_ROLLER_COUNT: u32 = 10;
 
-
 pub struct ProjectLogger {
     logger_name: String,
     error_logger_name: String,
@@ -33,7 +32,6 @@ pub struct ProjectLogger {
 }
 
 impl ProjectLogger {
-
     pub fn new_logger(logger_path: &PathBuf, logger_name: &str) -> Self {
         let error_logger_name = format!("{logger_name}_error");
         let standard_logger_file_name = format!("{logger_name}.log");
@@ -42,8 +40,13 @@ impl ProjectLogger {
         let full_error_logger_path_file = logger_path.join(&error_logger_file_name);
         let archive_logger_file_name = standard_logger_file_name.replace(".log", "_log_{}.gz");
         Self {
-            logger_name: logger_name.to_owned(), error_logger_name, full_logger_path_file, full_error_logger_path_file, 
-            archive_logger_file_name, max_file_size_mb: DEFAULT_MAX_FILE_SIZE_MB, roller_count: DEFAULT_ROLLER_COUNT
+            logger_name: logger_name.to_owned(),
+            error_logger_name,
+            full_logger_path_file,
+            full_error_logger_path_file,
+            archive_logger_file_name,
+            max_file_size_mb: DEFAULT_MAX_FILE_SIZE_MB,
+            roller_count: DEFAULT_ROLLER_COUNT,
         }
     }
 
@@ -56,7 +59,12 @@ impl ProjectLogger {
         let roller = Box::new(
             FixedWindowRoller::builder()
                 .build(&self.archive_logger_file_name, self.roller_count)
-                .unwrap_or_else(|_| panic!("Error in building fixed window roller for {}", self.logger_name))
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Error in building fixed window roller for {}",
+                        self.logger_name
+                    )
+                }),
         );
 
         let compound_policy = Box::new(CompoundPolicy::new(trigger, roller));
@@ -64,25 +72,50 @@ impl ProjectLogger {
         let std_file_ap = RollingFileAppender::builder()
             .encoder(Box::new(PatternEncoder::new(log_line_pattern)))
             .build(&self.full_logger_path_file, compound_policy)
-            .unwrap_or_else(|_| panic!("Error in building standard rolling file appender for {}", self.logger_name));
-        
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Error in building standard rolling file appender for {}",
+                    self.logger_name
+                )
+            });
+
         let err_file_ap = FileAppender::builder()
             .encoder(Box::new(PatternEncoder::new(log_line_pattern)))
             .build(&self.full_error_logger_path_file)
-            .unwrap_or_else(|_| panic!("Error in building error file appender for {}", self.error_logger_name));
-        
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Error in building error file appender for {}",
+                    self.error_logger_name
+                )
+            });
+
         let stdout_ap = ConsoleAppender::builder().build();
 
         let config = Config::builder()
             .appender(Appender::builder().build("stdout_ap", Box::new(stdout_ap)))
             .appender(Appender::builder().build("std_file_ap", Box::new(std_file_ap)))
             .appender(Appender::builder().build("err_file_ap", Box::new(err_file_ap)))
-            .logger(Logger::builder().appender("std_file_ap").build(&self.logger_name, LevelFilter::Debug))
-            .logger(Logger::builder().appender("err_file_ap").build(&self.error_logger_name, LevelFilter::Error))
-            .build(Root::builder().appender("stdout_ap").build(LevelFilter::Debug))
-            .unwrap_or_else(|_| panic!("Error in configuration of logger for {}", self.logger_name));
-        
-        log4rs::init_config(config).unwrap_or_else(|_| panic!("Error in init_config for {}", self.logger_name))
+            .logger(
+                Logger::builder()
+                    .appender("std_file_ap")
+                    .build(&self.logger_name, LevelFilter::Debug),
+            )
+            .logger(
+                Logger::builder()
+                    .appender("err_file_ap")
+                    .build(&self.error_logger_name, LevelFilter::Error),
+            )
+            .build(
+                Root::builder()
+                    .appender("stdout_ap")
+                    .build(LevelFilter::Debug),
+            )
+            .unwrap_or_else(|_| {
+                panic!("Error in configuration of logger for {}", self.logger_name)
+            });
+
+        log4rs::init_config(config)
+            .unwrap_or_else(|_| panic!("Error in init_config for {}", self.logger_name))
     }
 
     pub fn log_trace(&self, message: &String) {
@@ -132,7 +165,9 @@ mod tests {
     #[test]
     fn test_logger() {
         let logger_name = "test";
-        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap()).join("Log").join("log_sctys_rust_utilities");
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_rust_utilities");
         let logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = logger.set_logger();
         logger.log_trace(&format!("This is trace from {}", logger.get_logger_name()));

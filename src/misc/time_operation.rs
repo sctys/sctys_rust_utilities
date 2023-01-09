@@ -1,8 +1,8 @@
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono_tz::Tz;
+use rand::{thread_rng, Rng};
 use std::thread;
 use std::time::{Duration, SystemTime};
-use rand::{thread_rng, Rng};
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveTime, NaiveDateTime, Utc, TimeZone, Datelike};
-use chrono_tz::Tz;
 
 const SEC_TO_HOUR: i32 = 3600;
 const ONE_E3: i64 = 1_000;
@@ -51,11 +51,14 @@ pub fn system_time_to_timestamp(system_time: SystemTime, precision: SecPrecision
             SecPrecision::MicroSec => st.as_micros() as i64,
             SecPrecision::NanoSec => st.as_nanos() as i64,
         },
-        Err(e) => panic!("Unable to convert the system time {system_time:?} to timestamp. {e}")
+        Err(e) => panic!("Unable to convert the system time {system_time:?} to timestamp. {e}"),
     }
 }
 
-pub fn diff_system_time_date_time_sec<T: TimeZone>(system_time: SystemTime, date_time: DateTime<T>) -> i64 {
+pub fn diff_system_time_date_time_sec<T: TimeZone>(
+    system_time: SystemTime,
+    date_time: DateTime<T>,
+) -> i64 {
     let system_timestamp = system_time_to_timestamp(system_time, SecPrecision::Sec);
     let date_timestamp = date_time_to_timestamp(date_time, SecPrecision::Sec);
     system_timestamp - date_timestamp
@@ -76,23 +79,42 @@ pub fn get_day<T: TimeZone>(date_time: DateTime<T>) -> u32 {
 pub fn naive_date(year: i32, month: u32, day: u32) -> NaiveDate {
     match NaiveDate::from_ymd_opt(year, month, day) {
         Some(d) => d,
-        None => panic!("Invalid date {year}, {month}, {day}")
+        None => panic!("Invalid date {year}, {month}, {day}"),
     }
 }
 
-pub fn naive_date_time(year: i32, month: u32, day: u32, hour: u32, min: u32, sec: u32) -> NaiveDateTime {
+pub fn naive_date_time(
+    year: i32,
+    month: u32,
+    day: u32,
+    hour: u32,
+    min: u32,
+    sec: u32,
+) -> NaiveDateTime {
     let date = naive_date(year, month, day);
     let time = match NaiveTime::from_hms_opt(hour, min, sec) {
         Some(t) => t,
-        None => panic!("Invalid time {hour}, {min}, {sec}")
+        None => panic!("Invalid time {hour}, {min}, {sec}"),
     };
     NaiveDateTime::new(date, time)
 }
 
-pub fn utc_date_time(year: i32, month: u32, day: u32, hour: u32, min: u32, sec: u32) -> DateTime<Utc> {
-    match Utc.with_ymd_and_hms(year, month, day, hour, min, sec).single() {
+pub fn utc_date_time(
+    year: i32,
+    month: u32,
+    day: u32,
+    hour: u32,
+    min: u32,
+    sec: u32,
+) -> DateTime<Utc> {
+    match Utc
+        .with_ymd_and_hms(year, month, day, hour, min, sec)
+        .single()
+    {
         Some(dt) => dt,
-        None => panic!("Unable to construct the date time {year}, {month}, {day}, {hour}, {min}, {sec}")
+        None => {
+            panic!("Unable to construct the date time {year}, {month}, {day}, {hour}, {min}, {sec}")
+        }
     }
 }
 
@@ -114,22 +136,25 @@ pub fn utc_date_time_from_timestamp(timestamp: i64, precision: SecPrecision) -> 
         SecPrecision::Sec => (timestamp, 0),
         SecPrecision::MilliSec => (timestamp / ONE_E3, (timestamp % ONE_E3 * ONE_E6) as u32),
         SecPrecision::MicroSec => (timestamp / ONE_E6, (timestamp % ONE_E6 * ONE_E3) as u32),
-        SecPrecision::NanoSec => (timestamp / ONE_E9, (timestamp % ONE_E9) as u32)
+        SecPrecision::NanoSec => (timestamp / ONE_E9, (timestamp % ONE_E9) as u32),
     };
     match NaiveDateTime::from_timestamp_opt(secs, nsecs) {
         Some(dt) => naive_date_time_to_utc(dt),
-        None => panic!("Invalid timestamp {timestamp}")
+        None => panic!("Invalid timestamp {timestamp}"),
     }
 }
 
 fn fixed_offset_from_hour(hour: i32) -> FixedOffset {
     match FixedOffset::east_opt(hour * SEC_TO_HOUR) {
         Some(o) => o,
-        None => panic!("Invalid time offset {hour}")
+        None => panic!("Invalid time offset {hour}"),
     }
 }
 
-pub fn naive_date_time_to_fixed_offset(naive_date_time: NaiveDateTime, hour: i32) -> DateTime<FixedOffset> {
+pub fn naive_date_time_to_fixed_offset(
+    naive_date_time: NaiveDateTime,
+    hour: i32,
+) -> DateTime<FixedOffset> {
     let offset = fixed_offset_from_hour(hour);
     DateTime::<FixedOffset>::from_local(naive_date_time, offset)
 }
@@ -146,7 +171,9 @@ pub fn timezone_to_utc_date_time<T: TimeZone>(date_time: DateTime<T>) -> DateTim
 pub fn naive_date_time_to_timezone(naive_date_time: NaiveDateTime, timezone: Tz) -> DateTime<Tz> {
     match timezone.from_local_datetime(&naive_date_time).single() {
         Some(dt) => dt,
-        None => panic! ("Unable to convert naive date time {naive_date_time} into timezone {timezone}")
+        None => {
+            panic!("Unable to convert naive date time {naive_date_time} into timezone {timezone}")
+        }
     }
 }
 
@@ -157,14 +184,16 @@ pub fn utc_date_time_to_timezone(date_time: DateTime<Utc>, timezone: Tz) -> Date
 pub fn naive_date_from_string(date_str: &str, fmt: &str) -> NaiveDate {
     match NaiveDate::parse_from_str(date_str, fmt) {
         Ok(d) => d,
-        Err(e) => panic! ("Unable to parse the date from string for {date_str} in {fmt}, {e}")
+        Err(e) => panic!("Unable to parse the date from string for {date_str} in {fmt}, {e}"),
     }
 }
 
 pub fn naive_date_time_from_string(date_time_str: &str, fmt: &str) -> NaiveDateTime {
     match NaiveDateTime::parse_from_str(date_time_str, fmt) {
         Ok(dt) => dt,
-        Err(e) => panic! ("Unable to parse the date time from string for {date_time_str} in {fmt}, {e}")
+        Err(e) => {
+            panic!("Unable to parse the date time from string for {date_time_str} in {fmt}, {e}")
+        }
     }
 }
 
@@ -194,7 +223,10 @@ mod tests {
         let (year, month, day, hour, min, sec) = (2021, 10, 15, 18, 36, 44);
         let utc_datetime = utc_date_time(year, month, day, hour, min, sec);
         let timestamp = date_time_to_timestamp(utc_datetime, SecPrecision::Sec);
-        assert_eq!(utc_date_time_from_timestamp(timestamp, SecPrecision::Sec), utc_datetime);
+        assert_eq!(
+            utc_date_time_from_timestamp(timestamp, SecPrecision::Sec),
+            utc_datetime
+        );
     }
 
     #[test]

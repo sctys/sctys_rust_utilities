@@ -39,7 +39,6 @@ macro_rules! timeit {
 pub use function_name;
 pub use timeit;
 
-
 #[cfg(test)]
 mod tests {
 
@@ -48,7 +47,10 @@ mod tests {
     #[test]
     fn test_get_function_name() {
         let func_name = get_function_name(test_get_current_function_name);
-        assert_eq!(func_name, "sctys_rust_utilities::misc::utilities_function::tests::test_get_current_function_name")
+        assert_eq!(
+            func_name,
+            "sctys_rust_utilities::misc::utilities_function::tests::test_get_current_function_name"
+        )
     }
 
     #[test]
