@@ -27,7 +27,7 @@ impl<'a> SlackMessenger<'a> {
         log_channel_id: String,
         logger: &'a ProjectLogger,
     ) -> Self {
-        let api_token = load_apikey(api_key_path, api_key_file);
+        let api_token = APIKey::load_apikey(api_key_path, api_key_file);
         Self {
             api_token,
             main_channel_id,
@@ -88,23 +88,25 @@ struct APIKey {
     api_token: String,
 }
 
-fn load_apikey(api_key_path: &PathBuf, api_key_file: &str) -> String {
-    let full_api_path = api_key_path.join(api_key_file);
-    let api_str = match fs::read_to_string(&full_api_path) {
-        Ok(a_s) => a_s,
-        Err(e) => panic!(
-            "Unable to load the api file {}, {e}",
-            &full_api_path.display()
-        ),
-    };
-    let api_key_data: APIKey = match toml::from_str(&api_str) {
-        Ok(a_d) => a_d,
-        Err(e) => panic!(
-            "Unable to parse the api file {}, {e}",
-            &full_api_path.display()
-        ),
-    };
-    api_key_data.api_token
+impl APIKey {
+    fn load_apikey(api_key_path: &PathBuf, api_key_file: &str) -> String {
+        let full_api_path = api_key_path.join(api_key_file);
+        let api_str = match fs::read_to_string(&full_api_path) {
+            Ok(a_s) => a_s,
+            Err(e) => panic!(
+                "Unable to load the api file {}, {e}",
+                &full_api_path.display()
+            ),
+        };
+        let api_key_data: APIKey = match toml::from_str(&api_str) {
+            Ok(a_d) => a_d,
+            Err(e) => panic!(
+                "Unable to parse the api file {}, {e}",
+                &full_api_path.display()
+            ),
+        };
+        api_key_data.api_token
+    }
 }
 
 #[cfg(test)]

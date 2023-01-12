@@ -1,4 +1,4 @@
-use crate::logging::logger::ProjectLogger;
+use crate::logger::ProjectLogger;
 use crate::time_operation;
 use chrono::{DateTime, TimeZone};
 use polars::frame::DataFrame;
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn test_html() {
-        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).to_path_buf();
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io").to_path_buf();
         let file = "test.html".to_owned();
         let logger_name = "test_file_io";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_json() {
-        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).to_path_buf();
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io").to_path_buf();
         let file = "test.json".to_owned();
         let logger_name = "test_file_io";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_csv() {
-        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).to_path_buf();
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io").to_path_buf();
         let file = "test.csv".to_owned();
         let logger_name = "test_file_io";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_parquet() {
-        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).to_path_buf();
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io").to_path_buf();
         let file = "test.parquet".to_owned();
         let logger_name = "test_file_io";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())

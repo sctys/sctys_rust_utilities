@@ -1,6 +1,6 @@
 extern crate byte_unit;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use log::LevelFilter;
 use log::{debug, error, info, trace, warn};
@@ -161,6 +161,7 @@ mod tests {
 
     use super::*;
     use std::env;
+    use std::path::Path;
 
     #[test]
     fn test_logger() {
