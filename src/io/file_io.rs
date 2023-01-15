@@ -10,6 +10,7 @@ use std::io::Result;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+#[derive(Debug)]
 pub struct FileIO<'a> {
     project_logger: &'a ProjectLogger,
 }

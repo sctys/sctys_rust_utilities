@@ -9,14 +9,14 @@ const ONE_E3: i64 = 1_000;
 const ONE_E6: i64 = 1_000_000;
 const ONE_E9: i64 = 1_000_000_000;
 
-pub fn sleep(time_sec: u64) {
-    thread::sleep(Duration::from_secs(time_sec));
+pub fn sleep(sleep_time: Duration) {
+    thread::sleep(sleep_time);
 }
 
-pub fn random_sleep(lower_time_sec: f64, upper_time_sec: f64) {
+pub fn random_sleep((min_sleep_time, max_sleep_time): (Duration, Duration)) {
     let mut rng = thread_rng();
-    let time_sec = rng.gen_range(lower_time_sec..upper_time_sec);
-    thread::sleep(Duration::from_secs_f64(time_sec));
+    let sleep_time = rng.gen_range(min_sleep_time..max_sleep_time);
+    thread::sleep(sleep_time);
 }
 
 pub enum SecPrecision {

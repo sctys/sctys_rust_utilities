@@ -21,6 +21,7 @@ use log4rs::{Config, Handle};
 const DEFAULT_MAX_FILE_SIZE_MB: u128 = 10;
 const DEFAULT_ROLLER_COUNT: u32 = 10;
 
+#[derive(Debug)]
 pub struct ProjectLogger {
     logger_name: String,
     error_logger_name: String,

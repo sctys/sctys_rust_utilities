@@ -5,18 +5,20 @@ use crate::time_operation;
 use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 use toml;
 
 const NUM_RETRY: u32 = 5;
-const RETRY_SLEEP: u64 = 5;
+const RETRY_SLEEP: Duration = Duration::from_secs(5);
 
+#[derive(Debug)]
 pub struct SlackMessenger<'a> {
     api_token: String,
     main_channel_id: String,
     log_channel_id: String,
     logger: &'a ProjectLogger,
     num_retry: u32,
-    retry_sleep: u64,
+    retry_sleep: Duration,
 }
 
 impl<'a> SlackMessenger<'a> {
@@ -50,7 +52,7 @@ impl<'a> SlackMessenger<'a> {
         self.num_retry = num_retry;
     }
 
-    pub fn set_retry_sleep(&mut self, retry_sleep: u64) {
+    pub fn set_retry_sleep(&mut self, retry_sleep: Duration) {
         self.retry_sleep = retry_sleep;
     }
 
