@@ -1,6 +1,6 @@
 extern crate byte_unit;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use log::LevelFilter;
 use log::{debug, error, info, trace, warn};
@@ -33,12 +33,12 @@ pub struct ProjectLogger {
 }
 
 impl ProjectLogger {
-    pub fn new_logger(logger_path: &PathBuf, logger_name: &str) -> Self {
+    pub fn new_logger(logger_path: &Path, logger_name: &str) -> Self {
         let error_logger_name = format!("{logger_name}_error");
         let standard_logger_file_name = format!("{logger_name}.log");
         let error_logger_file_name = format!("{}.log", &error_logger_name);
         let full_logger_path_file = logger_path.join(&standard_logger_file_name);
-        let full_error_logger_path_file = logger_path.join(&error_logger_file_name);
+        let full_error_logger_path_file = logger_path.join(error_logger_file_name);
         let archive_logger_file_name = standard_logger_file_name.replace(".log", "_log_{}.gz");
         Self {
             logger_name: logger_name.to_owned(),
@@ -177,6 +177,5 @@ mod tests {
         logger.log_info(&format!("This is info from {}", logger.get_logger_name()));
         logger.log_warn(&format!("This is warn from {}", logger.get_logger_name()));
         logger.log_error(&format!("This is error from {}", logger.get_logger_name()));
-        assert!(true)
     }
 }

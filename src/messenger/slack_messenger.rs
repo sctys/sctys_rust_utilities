@@ -3,8 +3,9 @@ extern crate slack;
 use crate::logger::ProjectLogger;
 use crate::time_operation;
 use serde::Deserialize;
+use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::Duration;
 use toml;
 
@@ -22,14 +23,8 @@ pub struct SlackMessenger<'a> {
 }
 
 impl<'a> SlackMessenger<'a> {
-    pub fn new(
-        api_key_path: &PathBuf,
-        api_key_file: &str,
-        main_channel_id: String,
-        log_channel_id: String,
-        logger: &'a ProjectLogger,
-    ) -> Self {
-        let api_token = APIKey::load_apikey(api_key_path, api_key_file);
+    pub fn new(main_channel_id: String, log_channel_id: String, logger: &'a ProjectLogger) -> Self {
+        let api_token = APIKey::load_apikey();
         Self {
             api_token,
             main_channel_id,
@@ -91,8 +86,15 @@ struct APIKey {
 }
 
 impl APIKey {
-    fn load_apikey(api_key_path: &PathBuf, api_key_file: &str) -> String {
-        let full_api_path = api_key_path.join(api_key_file);
+    const PROJECT_KEY: &str = "SCTYS_PROJECT";
+    const API_KEY_PATH: &str = "Secret/secret_sctys_rust_utilities";
+    const API_KEY_FILE: &str = "messenger_api.toml";
+
+    fn load_apikey() -> String {
+        let full_api_path =
+            Path::new(&env::var(Self::PROJECT_KEY).expect("Unable to find project path"))
+                .join(Self::API_KEY_PATH)
+                .join(Self::API_KEY_FILE);
         let api_str = match fs::read_to_string(&full_api_path) {
             Ok(a_s) => a_s,
             Err(e) => panic!(
@@ -119,7 +121,6 @@ mod tests {
     use serde::Deserialize;
     use std::env;
     use std::fs;
-    use std::path::Path;
     use toml;
 
     #[derive(Deserialize)]
@@ -129,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_send_slack_message() {
-        fn load_channel_id(channel_config_path: &PathBuf, channel_config_file: &str) -> String {
+        fn load_channel_id(channel_config_path: &Path, channel_config_file: &str) -> String {
             let full_channel_path = channel_config_path.join(channel_config_file);
             let channel_id_str = match fs::read_to_string(&full_channel_path) {
                 Ok(c_s) => c_s,
@@ -154,29 +155,18 @@ mod tests {
             .join("log_sctys_notify");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger();
-        let api_key_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
-            .join("Config")
-            .join("config_sctys_rust_messenger");
-        let api_key_file = "messenger_api.toml";
         let channel_config_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Config")
-            .join("config_sctys_rust_messenger");
+            .join("config_sctys_rust_utilities");
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(
-            &api_key_path,
-            api_key_file,
-            channel_id,
-            log_channel_id,
-            &project_logger,
-        );
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let calling_func = utilities_function::function_name!(true);
         slack_messenger.retry_send_message(
             calling_func,
             &"Test message from rust".to_owned(),
             false,
         );
-        assert!(true);
     }
 }

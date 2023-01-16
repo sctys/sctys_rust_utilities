@@ -20,7 +20,7 @@ impl<'a> FileIO<'a> {
         Self { project_logger }
     }
 
-    pub fn check_folder_exist(folder_path: &PathBuf) -> bool {
+    pub fn check_folder_exist(folder_path: &Path) -> bool {
         folder_path.is_dir()
     }
 
@@ -117,7 +117,7 @@ impl<'a> FileIO<'a> {
             ) < 0)
     }
 
-    pub fn load_file_as_string(&self, folder_path: &PathBuf, file: &String) -> String {
+    pub fn load_file_as_string(&self, folder_path: &Path, file: &String) -> String {
         let full_path = folder_path.join(file);
         match fs::read_to_string(&full_path) {
             Ok(s) => {
@@ -136,7 +136,7 @@ impl<'a> FileIO<'a> {
         }
     }
 
-    pub fn write_string_to_file(&self, folder_path: &PathBuf, file: &String, content: &String) {
+    pub fn write_string_to_file(&self, folder_path: &Path, file: &String, content: &String) {
         let full_path = folder_path.join(file);
         match fs::write(&full_path, content) {
             Ok(()) => {
@@ -155,7 +155,7 @@ impl<'a> FileIO<'a> {
     }
 
     // allow for more complicated loading options from the reader
-    pub fn get_csv_reader(&self, folder_path: &PathBuf, file: &String) -> CsvReader<File> {
+    pub fn get_csv_reader(&self, folder_path: &Path, file: &String) -> CsvReader<File> {
         let full_path = folder_path.join(file);
         match CsvReader::from_path(&full_path) {
             Ok(c_r) => {
@@ -172,7 +172,7 @@ impl<'a> FileIO<'a> {
     }
 
     // directly loading the csv file with default options
-    pub fn load_csv_file(&self, folder_path: &PathBuf, file: &String) -> DataFrame {
+    pub fn load_csv_file(&self, folder_path: &Path, file: &String) -> DataFrame {
         let csv_reader = self.get_csv_reader(folder_path, file);
         match csv_reader.has_header(true).finish() {
             Ok(df) => df,
@@ -184,7 +184,7 @@ impl<'a> FileIO<'a> {
     }
 
     // allow for more complicated writing options for the writer
-    pub fn get_file_writer(&self, folder_path: &PathBuf, file: &String) -> File {
+    pub fn get_file_writer(&self, folder_path: &Path, file: &String) -> File {
         let full_path = folder_path.join(file);
         match File::create(&full_path) {
             Ok(c_f) => {
@@ -201,7 +201,7 @@ impl<'a> FileIO<'a> {
     }
 
     // directly writing the csv file with default options
-    pub fn write_csv_file(&self, folder_path: &PathBuf, file: &String, data: &mut DataFrame) {
+    pub fn write_csv_file(&self, folder_path: &Path, file: &String, data: &mut DataFrame) {
         let csv_writer = CsvWriter::new(self.get_file_writer(folder_path, file));
         if let Err(e) = csv_writer
             .has_header(true)
@@ -218,7 +218,7 @@ impl<'a> FileIO<'a> {
     }
 
     // allow for more complicated loading options from the reader
-    pub fn get_parquet_reader(&self, folder_path: &PathBuf, file: &String) -> ParquetReader<File> {
+    pub fn get_parquet_reader(&self, folder_path: &Path, file: &String) -> ParquetReader<File> {
         let full_path = folder_path.join(file);
         let file_reader = match File::open(&full_path) {
             Ok(p_f) => {
@@ -236,7 +236,7 @@ impl<'a> FileIO<'a> {
     }
 
     // directly reading the parquet file with default options
-    pub fn load_parquet_file(&self, folder_path: &PathBuf, file: &String) -> DataFrame {
+    pub fn load_parquet_file(&self, folder_path: &Path, file: &String) -> DataFrame {
         let parquet_reader: ParquetReader<File> = self.get_parquet_reader(folder_path, file);
         match parquet_reader.finish() {
             Ok(df) => df,
@@ -248,7 +248,7 @@ impl<'a> FileIO<'a> {
     }
 
     // directly writing the parquet file with default options
-    pub fn write_parquet_file(&self, folder_path: &PathBuf, file: &String, data: &mut DataFrame) {
+    pub fn write_parquet_file(&self, folder_path: &Path, file: &String, data: &mut DataFrame) {
         let parquet_writer = ParquetWriter::new(self.get_file_writer(folder_path, file));
         if let Err(e) = parquet_writer.finish(data) {
             let error_str = format!(
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_html() {
-        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io").to_path_buf();
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let file = "test.html".to_owned();
         let logger_name = "test_file_io";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
@@ -354,12 +354,11 @@ mod tests {
         let html_content = file_io.load_file_as_string(&folder_path, &file);
         let new_file = "test_new.html".to_owned();
         file_io.write_string_to_file(&folder_path, &new_file, &html_content);
-        assert!(true);
     }
 
     #[test]
     fn test_json() {
-        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io").to_path_buf();
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let file = "test.json".to_owned();
         let logger_name = "test_file_io";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
@@ -371,12 +370,11 @@ mod tests {
         let json_content = file_io.load_file_as_string(&folder_path, &file);
         let new_file = "test_new.json".to_owned();
         file_io.write_string_to_file(&folder_path, &new_file, &json_content);
-        assert!(true);
     }
 
     #[test]
     fn test_csv() {
-        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io").to_path_buf();
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let file = "test.csv".to_owned();
         let logger_name = "test_file_io";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
@@ -388,12 +386,11 @@ mod tests {
         let mut data = file_io.load_csv_file(&folder_path, &file);
         let new_file = "test_new.csv".to_owned();
         file_io.write_csv_file(&folder_path, &new_file, &mut data);
-        assert!(true);
     }
 
     #[test]
     fn test_parquet() {
-        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io").to_path_buf();
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let file = "test.parquet".to_owned();
         let logger_name = "test_file_io";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
@@ -405,6 +402,5 @@ mod tests {
         let mut data = file_io.load_parquet_file(&folder_path, &file);
         let new_file = "test_new.parquet".to_owned();
         file_io.write_parquet_file(&folder_path, &new_file, &mut data);
-        assert!(true);
     }
 }
