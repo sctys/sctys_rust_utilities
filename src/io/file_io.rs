@@ -265,6 +265,7 @@ impl<'a> FileIO<'a> {
 mod tests {
 
     use super::*;
+    use log::LevelFilter;
     use std::env;
 
     #[test]
@@ -293,7 +294,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger();
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         file_io.create_directory_if_not_exists(&folder_path);
         assert!(FileIO::check_folder_exist(&folder_path));
@@ -311,7 +312,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger();
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let elements = file_io.get_elements_in_folder(&folder_path);
         let cutoff_date_time = time_operation::utc_date_time(2023, 1, 1, 0, 0, 0);
@@ -329,7 +330,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger();
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let elements = file_io.get_elements_in_folder(&folder_path);
         let cutoff_date_time_early = time_operation::utc_date_time(2021, 10, 1, 0, 0, 0);
@@ -349,7 +350,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger();
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let html_content = file_io.load_file_as_string(&folder_path, &file);
         let new_file = "test_new.html".to_owned();
@@ -365,7 +366,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger();
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let json_content = file_io.load_file_as_string(&folder_path, &file);
         let new_file = "test_new.json".to_owned();
@@ -381,7 +382,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger();
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let mut data = file_io.load_csv_file(&folder_path, &file);
         let new_file = "test_new.csv".to_owned();
@@ -397,7 +398,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger();
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let mut data = file_io.load_parquet_file(&folder_path, &file);
         let new_file = "test_new.parquet".to_owned();

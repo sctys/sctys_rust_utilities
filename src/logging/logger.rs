@@ -51,8 +51,8 @@ impl ProjectLogger {
         }
     }
 
-    pub fn set_logger(&self) -> Handle {
-        let log_line_pattern = "{d(%Y-%m-%d %H:%M:%S)} | {({l}):5.5} | {f}:{L} — {m}{n}";
+    pub fn set_logger(&self, logger_level: LevelFilter) -> Handle {
+        let log_line_pattern = "{d(%Y-%m-%d %H:%M:%S)} | {h({l}):5.5} | {t} - {m}{n}";
 
         let trigger_size = byte_unit::n_mb_bytes!(self.max_file_size_mb) as u64;
         let trigger = Box::new(SizeTrigger::new(trigger_size));
@@ -106,11 +106,7 @@ impl ProjectLogger {
                     .appender("err_file_ap")
                     .build(&self.error_logger_name, LevelFilter::Error),
             )
-            .build(
-                Root::builder()
-                    .appender("stdout_ap")
-                    .build(LevelFilter::Debug),
-            )
+            .build(Root::builder().appender("stdout_ap").build(logger_level))
             .unwrap_or_else(|_| {
                 panic!("Error in configuration of logger for {}", self.logger_name)
             });
@@ -171,7 +167,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_rust_utilities");
         let logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = logger.set_logger();
+        let _handle = logger.set_logger(LevelFilter::Debug);
         logger.log_trace(&format!("This is trace from {}", logger.get_logger_name()));
         logger.log_debug(&format!("This is debug from {}", logger.get_logger_name()));
         logger.log_info(&format!("This is info from {}", logger.get_logger_name()));

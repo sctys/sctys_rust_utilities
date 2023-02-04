@@ -1,6 +1,9 @@
+use polars::prelude::{CsvReader, DataFrame};
+use polars_io::SerReader;
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::Client as AsyncClient;
 use reqwest::{Result, Url};
+use std::io::Cursor;
 use std::path::Path;
 use std::process::{Child, Command};
 use std::time::Duration;
@@ -44,6 +47,10 @@ pub enum ResponseCheckResult {
     ErrTerminate(String),
 }
 
+pub trait BrowseAction {
+    fn extra_action(&self, web_driver: &mut WebDriver) -> WebDriverResult<()>;
+}
+
 #[derive(Debug)]
 pub struct WebScraper<'a> {
     project_logger: &'a ProjectLogger,
@@ -68,7 +75,8 @@ impl<'a> WebScraper<'a> {
     const CONSECUTIVE_SLEEP: (Duration, Duration) =
         (Duration::from_secs(0), Duration::from_secs(30));
     const TIMEOUT: Duration = Duration::from_secs(120);
-    const GOOGLE_SHEET_REPLACE_TOKEN: (&str, &str) = ("edit#gid=", "/export?format=csv&gid=");
+    const GOOGLE_SHEET_URL: &str = "https://docs.google.com/spreadsheets/d/";
+    const GOOGLE_SHEET_REPLACE_TOKEN: (&str, &str) = ("edit#gid=", "export?format=csv&gid=");
     const WEB_DRIVER_PORT: u32 = 4444;
     const WEB_DRIVER_PROG: &str = "http://localhost:";
     const CHROME_PROCESS: &str = "chromedriver";
@@ -238,6 +246,10 @@ impl<'a> WebScraper<'a> {
                 panic!("{}", &error_str);
             }
         }
+    }
+
+    pub fn get_web_driver(&mut self) -> Option<&mut WebDriver> {
+        self.web_driver.as_mut()
     }
 
     pub fn restart_web_driver(&mut self) {
@@ -457,14 +469,18 @@ impl<'a> WebScraper<'a> {
         }
     }
 
-    fn url_from_google_sheet_link(google_sheet_link: &str) -> Url {
-        let csv_link = google_sheet_link.replace(
-            Self::GOOGLE_SHEET_REPLACE_TOKEN.0,
-            Self::GOOGLE_SHEET_REPLACE_TOKEN.1,
+    fn url_from_google_sheet_link(google_sheet_key: &str) -> Url {
+        let csv_link = format!(
+            "{}{}",
+            Self::GOOGLE_SHEET_URL,
+            google_sheet_key.replace(
+                Self::GOOGLE_SHEET_REPLACE_TOKEN.0,
+                Self::GOOGLE_SHEET_REPLACE_TOKEN.1,
+            )
         );
         match Url::parse(&csv_link) {
             Ok(u) => u,
-            Err(e) => panic!("Unable to parse the google sheet link {google_sheet_link}. {e}"),
+            Err(e) => panic!("Unable to parse the google sheet link {google_sheet_key}. {e}"),
         }
     }
 
@@ -473,15 +489,32 @@ impl<'a> WebScraper<'a> {
         self.retry_request_simple(&google_sheet_url, Self::null_check_func)
     }
 
-    pub fn browse_request(
+    pub fn convert_google_sheet_string_to_data_frame(
+        google_sheet_csv: Option<&String>,
+    ) -> Option<DataFrame> {
+        let cursor = Cursor::new(google_sheet_csv?);
+        CsvReader::new(cursor).has_header(true).finish().ok()
+    }
+
+    pub fn browse_page(&mut self, url: &Url) -> WebDriverResult<()> {
+        match &mut self.web_driver {
+            Some(w_d) => w_d.get(url.clone()),
+            None => {
+                self.set_web_driver();
+                self.browse_page(url)
+            }
+        }
+    }
+
+    pub fn browse_request<T: BrowseAction>(
         &mut self,
         url: &Url,
-        browse_action: fn(&WebDriver) -> WebDriverResult<()>,
+        browse_action: &T,
     ) -> WebDriverResult<String> {
-        match &self.web_driver {
+        match &mut self.web_driver {
             Some(w_d) => {
                 w_d.get(url.clone())?;
-                browse_action(w_d)?;
+                browse_action.extra_action(w_d)?;
                 w_d.page_source()
             }
             None => {
@@ -491,10 +524,10 @@ impl<'a> WebScraper<'a> {
         }
     }
 
-    pub fn retry_browse_request(
+    pub fn retry_browse_request<T: BrowseAction>(
         &mut self,
         url: &Url,
-        browse_action: fn(&WebDriver) -> WebDriverResult<()>,
+        browse_action: &T,
         check_func: fn(&String) -> ResponseCheckResult,
     ) -> Option<String> {
         let mut counter = 0;
@@ -538,11 +571,11 @@ impl<'a> WebScraper<'a> {
         None
     }
 
-    pub fn multiple_browse_requests(
+    pub fn multiple_browse_requests<T: BrowseAction>(
         &mut self,
         url_file_list: &'a Vec<UrlFile>,
         folder_path: &Path,
-        browse_action: fn(&WebDriver) -> WebDriverResult<()>,
+        browse_action: &T,
         check_func: fn(&String) -> ResponseCheckResult,
         browse_setting: BrowseSetting,
     ) {
@@ -582,6 +615,7 @@ mod tests {
 
     use super::*;
     use crate::utilities_function;
+    use log::LevelFilter;
     use serde::Deserialize;
     use std::env;
     use std::fs;
@@ -621,14 +655,14 @@ mod tests {
             .join("Log")
             .join("log_sctys_netdata");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger();
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
         let channel_config_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Config")
             .join("config_sctys_rust_utilities");
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
         let url = Url::parse("https://tfl.gov.uk/travel-information/timetables/").unwrap();
@@ -639,20 +673,48 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_requests() {
-        let logger_name = "test_multiple requests";
+    fn test_download_google_sheet() {
+        let logger_name = "test_simple scraping";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
             .join("log_sctys_netdata");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger();
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
         let channel_config_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Config")
             .join("config_sctys_rust_utilities");
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let file_io = FileIO::new(&project_logger);
+        let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
+        let url = "14Ep-CmoqWxrMU8HshxthRcdRW8IsXvh3n2-ZHVCzqzQ/edit#gid=1855920257";
+        let content = web_scraper.retry_download_google_sheet(url);
+        let mut data =
+            WebScraper::convert_google_sheet_string_to_data_frame(content.as_ref()).unwrap();
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
+        let file = "test_google_sheet.parquet".to_owned();
+        web_scraper
+            .file_io
+            .write_parquet_file(&folder_path, &file, &mut data);
+    }
+
+    #[test]
+    fn test_multiple_requests() {
+        let logger_name = "test_multiple requests";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_netdata");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        let channel_config_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Config")
+            .join("config_sctys_rust_utilities");
+        let channel_config_file = "messenger_channel_id.toml";
+        let channel_id = load_channel_id(&channel_config_path, channel_config_file);
+        let log_channel_id = channel_id.clone();
+        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
         let url_suffix = ["bakerloo", "central", "circle", "district", "jubilee"];
@@ -678,37 +740,53 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_simple_browsing() {
-        fn browse_action_wait(web_driver: &WebDriver) -> WebDriverResult<()> {
-            let element_css = "div#matchList.matchList";
-            web_driver.set_implicit_wait_timeout(Duration::from_secs(5))?;
+    struct TestBrowseAction {
+        wait_time: Duration,
+        element_css: String,
+    }
+
+    impl TestBrowseAction {
+        fn new() -> Self {
+            Self {
+                wait_time: Duration::from_secs(5),
+                element_css: "div#matchList.matchList".to_string(),
+            }
+        }
+    }
+
+    impl BrowseAction for TestBrowseAction {
+        fn extra_action(&self, web_driver: &mut WebDriver) -> WebDriverResult<()> {
+            web_driver.set_implicit_wait_timeout(self.wait_time)?;
             web_driver
-                .find_element(By::Css(element_css))?
+                .find_element(By::Css(&self.element_css))?
                 .wait_until()
                 .displayed()?;
             Ok(())
         }
+    }
 
+    #[test]
+    fn test_simple_browsing() {
         let logger_name = "test_simple browsing";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
             .join("log_sctys_netdata");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger();
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
         let channel_config_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Config")
             .join("config_sctys_rust_utilities");
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
+        let browse_action = TestBrowseAction::new();
         let url = Url::parse("https://www.nowgoal.com/").unwrap();
         web_scraper.turn_on_chrome_process();
         let content =
-            web_scraper.retry_browse_request(&url, browse_action_wait, WebScraper::null_check_func);
+            web_scraper.retry_browse_request(&url, &browse_action, WebScraper::null_check_func);
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let file = "test_browse.html".to_owned();
         web_scraper.save_request_content(&folder_path, &file, content);
@@ -718,30 +796,21 @@ mod tests {
 
     #[test]
     fn test_multiple_browsing() {
-        fn browse_action_wait(web_driver: &WebDriver) -> WebDriverResult<()> {
-            let element_css = "div#matchList.matchList";
-            web_driver.set_implicit_wait_timeout(Duration::from_secs(5))?;
-            web_driver
-                .find_element(By::Css(element_css))?
-                .wait_until()
-                .displayed()?;
-            Ok(())
-        }
-
         let logger_name = "test_multiple browsing";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
             .join("log_sctys_netdata");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger();
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
         let channel_config_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Config")
             .join("config_sctys_rust_utilities");
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
+        let browse_action = TestBrowseAction::new();
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
         let url_suffix = ["football/live", "football/results", "football/schedule"];
         let url = Url::parse("https://www.nowgoal.com/").unwrap();
@@ -755,7 +824,7 @@ mod tests {
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let calling_func = utilities_function::function_name!(true);
         let browse_setting = BrowseSetting {
-            restart_web_driver: true,
+            restart_web_driver: false,
             calling_func,
             log_only: true,
         };
@@ -763,7 +832,7 @@ mod tests {
         web_scraper.multiple_browse_requests(
             &url_file_list,
             &folder_path,
-            browse_action_wait,
+            &browse_action,
             WebScraper::null_check_func,
             browse_setting,
         );
