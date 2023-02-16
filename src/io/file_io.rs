@@ -154,6 +154,24 @@ impl<'a> FileIO<'a> {
         };
     }
 
+    pub async fn async_write_string_to_file(&self, folder_path: &Path, file: &String, content: &String) {
+        let full_path = folder_path.join(file);
+        match tokio::fs::write(&full_path, content).await {
+            Ok(()) => {
+                let debug_str = format!("File {} saved.", &full_path.display());
+                self.project_logger.log_debug(&debug_str);
+            }
+            Err(e) => {
+                let error_str = format!(
+                    "Unable to save string to file {}. {e}",
+                    &full_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                panic!("{}", &error_str);
+            }
+        };
+    }
+
     // allow for more complicated loading options from the reader
     pub fn get_csv_reader(&self, folder_path: &Path, file: &String) -> CsvReader<File> {
         let full_path = folder_path.join(file);

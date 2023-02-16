@@ -1,7 +1,6 @@
 use polars::prelude::{CsvReader, DataFrame};
 use polars_io::SerReader;
 use reqwest::blocking::{Client, RequestBuilder, Response};
-use reqwest::Client as AsyncClient;
 use reqwest::{Result, Url};
 use std::io::Cursor;
 use std::path::Path;
@@ -15,41 +14,8 @@ use crate::file_io::FileIO;
 use crate::logger::ProjectLogger;
 use crate::slack_messenger::SlackMessenger;
 use crate::{time_operation, utilities_function};
+use super::data_struct::{UrlFile, RequestSetting, BrowseSetting, ResponseCheckResult};
 
-#[derive(Debug)]
-pub struct UrlFile {
-    pub url: Url,
-    pub file_name: String,
-}
-
-impl UrlFile {
-    pub fn new(url: Url, file_name: String) -> Self {
-        Self { url, file_name }
-    }
-}
-
-#[derive(Debug)]
-pub struct RequestSetting<'a> {
-    pub calling_func: &'a str,
-    pub log_only: bool,
-}
-
-#[derive(Debug)]
-pub struct BrowseSetting<'a> {
-    pub restart_web_driver: bool,
-    pub calling_func: &'a str,
-    pub log_only: bool,
-}
-
-pub enum ResponseCheckResult {
-    Ok,
-    ErrContinue(String),
-    ErrTerminate(String),
-}
-
-pub trait BrowseAction {
-    fn extra_action(&self, web_driver: &mut WebDriver) -> WebDriverResult<()>;
-}
 
 #[derive(Debug)]
 pub struct WebScraper<'a> {
@@ -61,9 +27,7 @@ pub struct WebScraper<'a> {
     consecutive_sleep: (Duration, Duration),
     timeout: Duration,
     web_driver_port: u32,
-    fail_list: Vec<String>,
     client: Option<Client>,
-    async_client: Option<AsyncClient>,
     web_driver: Option<WebDriver>,
     browser: Option<ChromeCapabilities>,
     chrome_process: Option<Child>,
@@ -95,9 +59,7 @@ impl<'a> WebScraper<'a> {
             consecutive_sleep: Self::CONSECUTIVE_SLEEP,
             timeout: Self::TIMEOUT,
             web_driver_port: Self::WEB_DRIVER_PORT,
-            fail_list: Vec::<String>::new(),
             client: None,
-            async_client: None,
             web_driver: None,
             browser: None,
             chrome_process: None,
@@ -126,10 +88,6 @@ impl<'a> WebScraper<'a> {
 
     pub fn set_blocking_client(&mut self, client: Client) {
         self.client = Some(client);
-    }
-
-    pub fn set_async_client(&mut self, client: AsyncClient) {
-        self.async_client = Some(client)
     }
 
     pub fn set_browser(&mut self, browser: ChromeCapabilities) {
@@ -370,7 +328,6 @@ impl<'a> WebScraper<'a> {
         }
         let error_str = format!("Fail to load the page {}.", url.as_str());
         self.project_logger.log_error(&error_str);
-        self.fail_list.push(url.as_str().to_owned());
         None
     }
 
@@ -425,14 +382,11 @@ impl<'a> WebScraper<'a> {
         }
         let error_str = format!("Fail to load the page {}.", url.as_str());
         self.project_logger.log_error(&error_str);
-        self.fail_list.push(url.as_str().to_owned());
         None
     }
 
-    pub fn save_request_content(&self, folder_path: &Path, file: &String, content: Option<String>) {
-        if let Some(c) = content {
-            self.file_io.write_string_to_file(folder_path, file, &c);
-        }
+    pub fn save_request_content(&self, folder_path: &Path, file: &String, content: String) {
+        self.file_io.write_string_to_file(folder_path, file, &content);
     }
 
     pub fn multiple_requests(
@@ -441,23 +395,26 @@ impl<'a> WebScraper<'a> {
         folder_path: &Path,
         check_func: fn(&Response) -> ResponseCheckResult,
         request_setting: RequestSetting,
-    ) {
-        self.fail_list.clear();
+    ) -> Vec<UrlFile> {
+        let mut fail_list = Vec::new();
         for url_file in tqdm::tqdm(url_file_list.iter()) {
-            let content = self.retry_request_simple(&url_file.url, check_func);
-            self.save_request_content(folder_path, &url_file.file_name, content);
+            if let Some(content) = self.retry_request_simple(&url_file.url, check_func) {
+                self.save_request_content(folder_path, &url_file.file_name, content);
+            } else {
+                fail_list.push(url_file.clone())
+            }
             time_operation::random_sleep(self.consecutive_sleep);
         }
-        if !self.fail_list.is_empty() {
+        if !fail_list.is_empty() {
             let fail_url_list = format!(
                 "The following urls were not loaded successfully:\n\n {}",
-                self.fail_list.join("\n")
+                fail_list.iter().map(|x| x.url.as_str()).collect::<Vec<&str>>().join("\n")
             );
             self.project_logger.log_error(&fail_url_list);
             let fail_url_message = format!(
                 "The urls starting with {:?} has {} out of {} fail urls.",
-                self.fail_list.first(),
-                self.fail_list.len(),
+                fail_list[0].url.as_str(),
+                fail_list.len(),
                 url_file_list.len()
             );
             self.slack_messenger.retry_send_message(
@@ -465,8 +422,46 @@ impl<'a> WebScraper<'a> {
                 &fail_url_message,
                 request_setting.log_only,
             );
-            self.fail_list.clear();
         }
+        fail_list
+    }
+
+    pub fn multiple_requests_with_builder(
+        &mut self,
+        url_file_list: &'a Vec<UrlFile>,
+        request_builder_list: &[RequestBuilder],
+        folder_path: &Path,
+        check_func: fn(&Response) -> ResponseCheckResult,
+        request_setting: RequestSetting,
+    ) -> Vec<UrlFile> {
+        let mut fail_list = Vec::new();
+        for (url_file, request_builder) in tqdm::tqdm(url_file_list.iter().zip(request_builder_list.iter())) {
+            if let Some(content)= self.retry_request_from_builder(request_builder, &url_file.url, check_func) {
+                self.save_request_content(folder_path, &url_file.file_name, content);
+            } else {
+                fail_list.push(url_file.clone())
+            }
+            time_operation::random_sleep(self.consecutive_sleep);
+        }
+        if !fail_list.is_empty() {
+            let fail_url_list = format!(
+                "The following urls were not loaded successfully:\n\n {}",
+                fail_list.iter().map(|x| x.url.as_str()).collect::<Vec<&str>>().join("\n")
+            );
+            self.project_logger.log_error(&fail_url_list);
+            let fail_url_message = format!(
+                "The urls starting with {:?} has {} out of {} fail urls.",
+                fail_list.first(),
+                fail_list.len(),
+                url_file_list.len()
+            );
+            self.slack_messenger.retry_send_message(
+                request_setting.calling_func,
+                &fail_url_message,
+                request_setting.log_only,
+            );
+        }
+        fail_list
     }
 
     fn url_from_google_sheet_link(google_sheet_key: &str) -> Url {
@@ -506,15 +501,15 @@ impl<'a> WebScraper<'a> {
         }
     }
 
-    pub fn browse_request<T: BrowseAction>(
+    pub fn browse_request(
         &mut self,
         url: &Url,
-        browse_action: &T,
+        browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
     ) -> WebDriverResult<String> {
         match &mut self.web_driver {
             Some(w_d) => {
                 w_d.get(url.clone())?;
-                browse_action.extra_action(w_d)?;
+                browse_action(w_d)?;
                 w_d.page_source()
             }
             None => {
@@ -524,10 +519,10 @@ impl<'a> WebScraper<'a> {
         }
     }
 
-    pub fn retry_browse_request<T: BrowseAction>(
+    pub fn retry_browse_request(
         &mut self,
         url: &Url,
-        browse_action: &T,
+        browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
         check_func: fn(&String) -> ResponseCheckResult,
     ) -> Option<String> {
         let mut counter = 0;
@@ -567,37 +562,39 @@ impl<'a> WebScraper<'a> {
         }
         let error_str = format!("Fail to browse the page {}.", url.as_str());
         self.project_logger.log_error(&error_str);
-        self.fail_list.push(url.as_str().to_owned());
         None
     }
 
-    pub fn multiple_browse_requests<T: BrowseAction>(
+    pub fn multiple_browse_requests(
         &mut self,
         url_file_list: &'a Vec<UrlFile>,
         folder_path: &Path,
-        browse_action: &T,
+        browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
         check_func: fn(&String) -> ResponseCheckResult,
         browse_setting: BrowseSetting,
-    ) {
-        self.fail_list.clear();
+    ) -> Vec<UrlFile> {
+        let mut fail_list = Vec::new();
         for url_file in tqdm::tqdm(url_file_list.iter()) {
-            let content = self.retry_browse_request(&url_file.url, browse_action, check_func);
-            self.save_request_content(folder_path, &url_file.file_name, content);
+            if let Some(content) = self.retry_browse_request(&url_file.url, browse_action, check_func) {
+                self.save_request_content(folder_path, &url_file.file_name, content);
+            } else {
+                fail_list.push(url_file.clone())
+            }
             time_operation::random_sleep(self.consecutive_sleep);
             if browse_setting.restart_web_driver {
                 self.restart_web_driver();
             }
         }
-        if !self.fail_list.is_empty() {
+        if !fail_list.is_empty() {
             let fail_url_list = format!(
                 "The following urls were not browsed successfully:\n\n {}",
-                self.fail_list.join("\n")
+                fail_list.iter().map(|x| x.url.as_str()).collect::<Vec<&str>>().join("\n")
             );
             self.project_logger.log_error(&fail_url_list);
             let fail_url_message = format!(
                 "The urls starting with {:?} has {} out of {} fail urls.",
-                self.fail_list.first(),
-                self.fail_list.len(),
+                fail_list.first(),
+                fail_list.len(),
                 url_file_list.len()
             );
             self.slack_messenger.retry_send_message(
@@ -605,8 +602,8 @@ impl<'a> WebScraper<'a> {
                 &fail_url_message,
                 browse_setting.log_only,
             );
-            self.fail_list.clear();
         }
+        fail_list
     }
 }
 
@@ -650,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_simple_scraping() {
-        let logger_name = "test_simple scraping";
+        let logger_name = "test_simple_scraping";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
             .join("log_sctys_netdata");
@@ -669,12 +666,12 @@ mod tests {
         let content = web_scraper.retry_request_simple(&url, WebScraper::null_check_func);
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let file = "test_scrape.html".to_owned();
-        web_scraper.save_request_content(&folder_path, &file, content);
+        web_scraper.save_request_content(&folder_path, &file, content.unwrap());
     }
 
     #[test]
     fn test_download_google_sheet() {
-        let logger_name = "test_simple scraping";
+        let logger_name = "test_download_google_sheet";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
             .join("log_sctys_netdata");
@@ -702,7 +699,7 @@ mod tests {
 
     #[test]
     fn test_multiple_requests() {
-        let logger_name = "test_multiple requests";
+        let logger_name = "test_multiple_requests";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
             .join("log_sctys_netdata");
@@ -718,7 +715,7 @@ mod tests {
         let file_io = FileIO::new(&project_logger);
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
         let url_suffix = ["bakerloo", "central", "circle", "district", "jubilee"];
-        let url = Url::parse("https://tfl.gov.uk/travel-information/timetables/").unwrap();
+        let url = Url::parse("https://tfl.gov.uk/tube/timetable/").unwrap();
         let file = "test_scrape{index}.html".to_owned();
         let url_file_list = Vec::from_iter(url_suffix.iter().enumerate().map(|(i, x)| {
             UrlFile::new(
@@ -740,34 +737,21 @@ mod tests {
         );
     }
 
-    struct TestBrowseAction {
-        wait_time: Duration,
-        element_css: String,
-    }
+    const WAIT_TIME: Duration = Duration::from_secs(5);
+    const ELEMENT_CSS: &str = "div#matchList.matchList";
 
-    impl TestBrowseAction {
-        fn new() -> Self {
-            Self {
-                wait_time: Duration::from_secs(5),
-                element_css: "div#matchList.matchList".to_string(),
-            }
-        }
-    }
-
-    impl BrowseAction for TestBrowseAction {
-        fn extra_action(&self, web_driver: &mut WebDriver) -> WebDriverResult<()> {
-            web_driver.set_implicit_wait_timeout(self.wait_time)?;
-            web_driver
-                .find_element(By::Css(&self.element_css))?
-                .wait_until()
-                .displayed()?;
-            Ok(())
-        }
+    fn extra_action(web_driver: &mut WebDriver) -> WebDriverResult<()> {
+        web_driver.set_implicit_wait_timeout(WAIT_TIME)?;
+        web_driver
+            .find_element(By::Css(ELEMENT_CSS))?
+            .wait_until()
+            .displayed()?;
+        Ok(())
     }
 
     #[test]
     fn test_simple_browsing() {
-        let logger_name = "test_simple browsing";
+        let logger_name = "test_simple_browsing";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
             .join("log_sctys_netdata");
@@ -782,21 +766,21 @@ mod tests {
         let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
-        let browse_action = TestBrowseAction::new();
+        let browse_action = extra_action;
         let url = Url::parse("https://www.nowgoal.com/").unwrap();
         web_scraper.turn_on_chrome_process();
         let content =
-            web_scraper.retry_browse_request(&url, &browse_action, WebScraper::null_check_func);
+            web_scraper.retry_browse_request(&url, browse_action, WebScraper::null_check_func);
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let file = "test_browse.html".to_owned();
-        web_scraper.save_request_content(&folder_path, &file, content);
+        web_scraper.save_request_content(&folder_path, &file, content.unwrap());
         web_scraper.close_web_driver();
         web_scraper.kill_chrome_process();
     }
 
     #[test]
     fn test_multiple_browsing() {
-        let logger_name = "test_multiple browsing";
+        let logger_name = "test_multiple_browsing";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
             .join("log_sctys_netdata");
@@ -810,7 +794,7 @@ mod tests {
         let log_channel_id = channel_id.clone();
         let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
-        let browse_action = TestBrowseAction::new();
+        let browse_action = extra_action;
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
         let url_suffix = ["football/live", "football/results", "football/schedule"];
         let url = Url::parse("https://www.nowgoal.com/").unwrap();
@@ -832,7 +816,7 @@ mod tests {
         web_scraper.multiple_browse_requests(
             &url_file_list,
             &folder_path,
-            &browse_action,
+            browse_action,
             WebScraper::null_check_func,
             browse_setting,
         );

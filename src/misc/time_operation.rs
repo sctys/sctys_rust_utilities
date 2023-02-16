@@ -3,6 +3,7 @@ use chrono_tz::Tz;
 use rand::{thread_rng, Rng};
 use std::thread;
 use std::time::{Duration, SystemTime};
+use tokio::time;
 
 const SEC_TO_HOUR: i32 = 3600;
 const ONE_E3: i64 = 1_000;
@@ -17,6 +18,16 @@ pub fn random_sleep((min_sleep_time, max_sleep_time): (Duration, Duration)) {
     let mut rng = thread_rng();
     let sleep_time = rng.gen_range(min_sleep_time..max_sleep_time);
     thread::sleep(sleep_time);
+}
+
+pub async fn async_sleep(sleep_time: Duration) {
+    time::sleep(sleep_time).await;
+}
+
+pub async fn async_random_sleep((min_sleep_time, max_sleep_time): (Duration, Duration)) {
+    let mut rng = thread_rng();
+    let sleep_time = rng.gen_range(min_sleep_time..max_sleep_time);
+    time::sleep(sleep_time).await;
 }
 
 pub enum SecPrecision {
