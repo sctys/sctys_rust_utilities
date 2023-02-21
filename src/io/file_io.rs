@@ -154,7 +154,12 @@ impl<'a> FileIO<'a> {
         };
     }
 
-    pub async fn async_write_string_to_file(&self, folder_path: &Path, file: &String, content: &String) {
+    pub async fn async_write_string_to_file(
+        &self,
+        folder_path: &Path,
+        file: &String,
+        content: &String,
+    ) {
         let full_path = folder_path.join(file);
         match tokio::fs::write(&full_path, content).await {
             Ok(()) => {

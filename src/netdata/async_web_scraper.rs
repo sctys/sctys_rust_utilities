@@ -7,16 +7,14 @@ use std::path::Path;
 use std::process::{Child, Command};
 use std::time::Duration;
 use thirtyfour::error::WebDriverResult;
-use thirtyfour::{ChromeCapabilities, WebDriver, CapabilitiesHelper};
 use thirtyfour::Proxy as BrowserProxy;
+use thirtyfour::{CapabilitiesHelper, ChromeCapabilities, WebDriver};
 
-
+use super::data_struct::{BrowseSetting, RequestSetting, ResponseCheckResult, UrlFile};
 use crate::file_io::FileIO;
 use crate::logger::ProjectLogger;
 use crate::slack_messenger::SlackMessenger;
 use crate::utilities_function;
-use super::data_struct::{UrlFile, RequestSetting, BrowseSetting, ResponseCheckResult};
-
 
 #[derive(Debug)]
 pub struct AsyncWebScraper<'a> {
@@ -102,7 +100,8 @@ impl<'a> AsyncWebScraper<'a> {
             panic!("{}", &error_str);
         };
         if let Err(e) = browser.set_disable_dev_shm_usage() {
-            let error_str = format!("Unable to set disable_dev_shm_usage for the chrome browser, {e}");
+            let error_str =
+                format!("Unable to set disable_dev_shm_usage for the chrome browser, {e}");
             self.project_logger.log_error(&error_str);
             panic!("{}", &error_str);
         };
@@ -126,7 +125,11 @@ impl<'a> AsyncWebScraper<'a> {
         browser
     }
 
-    pub fn set_browser_proxy(&self, browser: &ChromeCapabilities, browser_proxy: BrowserProxy) -> ChromeCapabilities {
+    pub fn set_browser_proxy(
+        &self,
+        browser: &ChromeCapabilities,
+        browser_proxy: BrowserProxy,
+    ) -> ChromeCapabilities {
         let mut browser_with_proxy = browser.clone();
         if let Err(e) = browser_with_proxy.set_proxy(browser_proxy) {
             let error_str = format!("Unable to set the proxy. {e}");
@@ -183,7 +186,7 @@ impl<'a> AsyncWebScraper<'a> {
         )
     }
 
-    pub async fn set_web_driver(&self, browser: ChromeCapabilities) -> WebDriver{
+    pub async fn set_web_driver(&self, browser: ChromeCapabilities) -> WebDriver {
         let server_url = self.web_driver_path();
         match WebDriver::new(&server_url, browser).await {
             Ok(web_driver) => web_driver,
@@ -202,9 +205,8 @@ impl<'a> AsyncWebScraper<'a> {
                 self.project_logger.log_debug(&debug_str);
             }
             Err(e) => {
-                let error_str = format!(
-                    "Unable to quit web driver. Please check and clear the process. {e}"
-                );
+                let error_str =
+                    format!("Unable to quit web driver. Please check and clear the process. {e}");
                 self.project_logger.log_error(&error_str);
                 panic! {"{}", &error_str};
             }
@@ -238,10 +240,8 @@ impl<'a> AsyncWebScraper<'a> {
                     }
                 },
                 ResponseCheckResult::ErrContinue(e) => {
-                    let warn_str = format!(
-                        "Checking of the response failed for {}. {e}",
-                        url.as_str()
-                    );
+                    let warn_str =
+                        format!("Checking of the response failed for {}. {e}", url.as_str());
                     self.project_logger.log_warn(&warn_str);
                     None
                 }
@@ -252,10 +252,7 @@ impl<'a> AsyncWebScraper<'a> {
                 }
             },
             Err(e) => {
-                let warn_str = format!(
-                    "Unable to load the page {}. {e}",
-                    url.as_str()
-                );
+                let warn_str = format!("Unable to load the page {}. {e}", url.as_str());
                 self.project_logger.log_warn(&warn_str);
                 None
             }
@@ -263,19 +260,25 @@ impl<'a> AsyncWebScraper<'a> {
     }
 
     pub async fn save_request_content(&self, folder_path: &Path, file: &String, content: String) {
-        self.file_io.async_write_string_to_file(folder_path, file, &content).await;
+        self.file_io
+            .async_write_string_to_file(folder_path, file, &content)
+            .await;
     }
 
     async fn request_and_save_content(
-        &self, 
+        &self,
         url_file: &UrlFile,
         proxy: Proxy,
         request_builder_func: fn(Proxy, Url) -> RequestBuilder,
         folder_path: &Path,
         check_func: fn(&Response) -> ResponseCheckResult,
     ) -> Option<UrlFile> {
-        if let Some(content) = self.request_with_proxy(&url_file.url, proxy, request_builder_func, check_func).await {
-            self.save_request_content(folder_path, &url_file.file_name, content).await;
+        if let Some(content) = self
+            .request_with_proxy(&url_file.url, proxy, request_builder_func, check_func)
+            .await
+        {
+            self.save_request_content(folder_path, &url_file.file_name, content)
+                .await;
             None
         } else {
             Some(url_file.clone())
@@ -296,19 +299,35 @@ impl<'a> AsyncWebScraper<'a> {
         while counter < self.num_retry && !pending_url_file_list.is_empty() {
             let mut proxy_list = scraper_proxy.generate_proxy().await;
             let mut fail_list = Vec::new();
-            for chunk in pending_url_file_list.iter().chunks(Self::CHUNK_SIZE).into_iter() {
+            for chunk in pending_url_file_list
+                .iter()
+                .chunks(Self::CHUNK_SIZE)
+                .into_iter()
+            {
                 let proxy_iter = ScraperProxy::sample_proxy(&mut proxy_list, Self::CHUNK_SIZE);
-                let request_tasks = proxy_iter.zip(chunk).map(|(proxy_pair, url_file)| self.request_and_save_content(url_file, proxy_pair.proxy.clone(), request_builder_func, folder_path, check_func));
+                let request_tasks = proxy_iter.zip(chunk).map(|(proxy_pair, url_file)| {
+                    self.request_and_save_content(
+                        url_file,
+                        proxy_pair.proxy.clone(),
+                        request_builder_func,
+                        folder_path,
+                        check_func,
+                    )
+                });
                 let request_futures = future::join_all(request_tasks).await;
                 fail_list.extend(request_futures.into_iter().flatten());
-            };
+            }
             pending_url_file_list = fail_list;
             counter += 1;
         }
         if !pending_url_file_list.is_empty() {
             let fail_url_list = format!(
                 "The following urls were not loaded successfully:\n\n {}",
-                pending_url_file_list.iter().map(|x| x.url.as_str()).collect::<Vec<&str>>().join("\n")
+                pending_url_file_list
+                    .iter()
+                    .map(|x| x.url.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("\n")
             );
             self.project_logger.log_error(&fail_url_list);
             let fail_url_message = format!(
@@ -324,20 +343,19 @@ impl<'a> AsyncWebScraper<'a> {
             );
         }
         pending_url_file_list
-    } 
+    }
 
     pub async fn browse_page(web_driver: &mut WebDriver, url: &Url) -> WebDriverResult<()> {
         web_driver.goto(url.clone()).await
-    } 
-    
+    }
 
     pub async fn browse_request<F>(
         web_driver: &mut WebDriver,
         url: &Url,
         browse_action: &F,
-    ) -> WebDriverResult<String> 
-    where 
-        F: for<'b> AsyncFn<&'b mut WebDriver, Output = WebDriverResult<()>>
+    ) -> WebDriverResult<String>
+    where
+        F: for<'b> AsyncFn<&'b mut WebDriver, Output = WebDriverResult<()>>,
     {
         Self::browse_page(web_driver, url).await?;
         browse_action(web_driver).await?;
@@ -351,41 +369,36 @@ impl<'a> AsyncWebScraper<'a> {
         browser: &ChromeCapabilities,
         browse_action: &F,
         check_func: fn(&String) -> ResponseCheckResult,
-    ) -> Option<String> 
+    ) -> Option<String>
     where
-        F: for<'b> AsyncFn<&'b mut WebDriver, Output = WebDriverResult<()>>
+        F: for<'b> AsyncFn<&'b mut WebDriver, Output = WebDriverResult<()>>,
     {
         let browser_with_proxy = self.set_browser_proxy(browser, proxy);
         let mut web_driver = self.set_web_driver(browser_with_proxy).await;
         match Self::browse_request(&mut web_driver, url, browse_action).await {
-            Ok(r) => {
-                match check_func(&r) {
-                    ResponseCheckResult::Ok => {
-                        let debug_str = format!("Request {} browsed.", url.as_str());
-                        self.project_logger.log_debug(&debug_str);
-                        self.close_web_driver(web_driver).await;
-                        Some(r)
-                    }
-                    ResponseCheckResult::ErrContinue(e) => {
-                        let warn_str = format!("Checking for the response failed for {}. {e}", url.as_str());
-                        self.project_logger.log_warn(&warn_str);
-                        self.close_web_driver(web_driver).await;
-                        None
-                    }
-                    ResponseCheckResult::ErrTerminate(e) => {
-                        let error_str =
-                            format!("Terminate to load the page {}. {e}", url.as_str());
-                        self.project_logger.log_error(&error_str);
-                        self.close_web_driver(web_driver).await;
-                        None
-                    }
+            Ok(r) => match check_func(&r) {
+                ResponseCheckResult::Ok => {
+                    let debug_str = format!("Request {} browsed.", url.as_str());
+                    self.project_logger.log_debug(&debug_str);
+                    self.close_web_driver(web_driver).await;
+                    Some(r)
                 }
-            }
+                ResponseCheckResult::ErrContinue(e) => {
+                    let warn_str =
+                        format!("Checking for the response failed for {}. {e}", url.as_str());
+                    self.project_logger.log_warn(&warn_str);
+                    self.close_web_driver(web_driver).await;
+                    None
+                }
+                ResponseCheckResult::ErrTerminate(e) => {
+                    let error_str = format!("Terminate to load the page {}. {e}", url.as_str());
+                    self.project_logger.log_error(&error_str);
+                    self.close_web_driver(web_driver).await;
+                    None
+                }
+            },
             Err(e) => {
-                let warn_str = format!(
-                    "Unable to browse the page {}. {e}",
-                    url.as_str()
-                );
+                let warn_str = format!("Unable to browse the page {}. {e}", url.as_str());
                 self.project_logger.log_warn(&warn_str);
                 self.close_web_driver(web_driver).await;
                 None
@@ -394,19 +407,23 @@ impl<'a> AsyncWebScraper<'a> {
     }
 
     async fn browse_and_save_content<F>(
-        &self, 
+        &self,
         url_file: &UrlFile,
         proxy: BrowserProxy,
         browser: &ChromeCapabilities,
         folder_path: &Path,
         browse_action: &F,
         check_func: fn(&String) -> ResponseCheckResult,
-    ) -> Option<UrlFile> 
+    ) -> Option<UrlFile>
     where
-        F: for<'b> AsyncFn<&'b mut WebDriver, Output = WebDriverResult<()>>
+        F: for<'b> AsyncFn<&'b mut WebDriver, Output = WebDriverResult<()>>,
     {
-        if let Some(content) = self.browse_request_with_proxy(&url_file.url, proxy, browser, browse_action, check_func).await {
-            self.save_request_content(folder_path, &url_file.file_name, content).await;
+        if let Some(content) = self
+            .browse_request_with_proxy(&url_file.url, proxy, browser, browse_action, check_func)
+            .await
+        {
+            self.save_request_content(folder_path, &url_file.file_name, content)
+                .await;
             None
         } else {
             Some(url_file.clone())
@@ -425,26 +442,43 @@ impl<'a> AsyncWebScraper<'a> {
         browse_setting: BrowseSetting<'a>,
     ) -> Vec<UrlFile>
     where
-        F: for<'b> AsyncFn<&'b mut WebDriver, Output = WebDriverResult<()>>
+        F: for<'b> AsyncFn<&'b mut WebDriver, Output = WebDriverResult<()>>,
     {
         let mut counter = 0;
         let mut pending_url_file_list = url_file_list.to_owned();
         while counter < self.num_retry && !pending_url_file_list.is_empty() {
             let mut fail_list = Vec::new();
             let mut proxy_list = scraper_proxy.generate_proxy().await;
-            for chunk in pending_url_file_list.iter().chunks(Self::CHUNK_SIZE).into_iter() {
+            for chunk in pending_url_file_list
+                .iter()
+                .chunks(Self::CHUNK_SIZE)
+                .into_iter()
+            {
                 let proxy_iter = ScraperProxy::sample_proxy(&mut proxy_list, Self::CHUNK_SIZE);
-                let request_tasks = proxy_iter.zip(chunk).map(|(proxy_pair, url_file)| self.browse_and_save_content(url_file, proxy_pair.browser_proxy.clone(), browser, folder_path, browse_action, check_func));
+                let request_tasks = proxy_iter.zip(chunk).map(|(proxy_pair, url_file)| {
+                    self.browse_and_save_content(
+                        url_file,
+                        proxy_pair.browser_proxy.clone(),
+                        browser,
+                        folder_path,
+                        browse_action,
+                        check_func,
+                    )
+                });
                 let request_futures = future::join_all(request_tasks).await;
                 fail_list.extend(request_futures.into_iter().flatten())
-            };
+            }
             pending_url_file_list = fail_list;
             counter += 1;
         }
         if !pending_url_file_list.is_empty() {
             let fail_url_list = format!(
                 "The following urls were not browsed successfully:\n\n {}",
-                pending_url_file_list.iter().map(|x| x.url.as_str()).collect::<Vec<&str>>().join("\n")
+                pending_url_file_list
+                    .iter()
+                    .map(|x| x.url.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("\n")
             );
             self.project_logger.log_error(&fail_url_list);
             let fail_url_message = format!(
@@ -467,11 +501,14 @@ pub trait AsyncFn<T>: Fn(T) -> <Self as AsyncFn<T>>::Fut {
     type Fut: Future<Output = <Self as AsyncFn<T>>::Output>;
     type Output;
 }
-impl<T, F, Fut> AsyncFn<T> for F where F: Fn(T) -> Fut, Fut: Future {
+impl<T, F, Fut> AsyncFn<T> for F
+where
+    F: Fn(T) -> Fut,
+    Fut: Future,
+{
     type Fut = Fut;
     type Output = Fut::Output;
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -479,11 +516,11 @@ mod tests {
     use super::*;
     use log::LevelFilter;
     use sctys_proxy::ScraperProxy;
-    use thirtyfour::By;
-    use thirtyfour::prelude::ElementWaitable;
+    use serde::Deserialize;
     use std::env;
     use std::fs;
-    use serde::Deserialize;
+    use thirtyfour::prelude::ElementWaitable;
+    use thirtyfour::By;
     use toml;
 
     #[derive(Deserialize)]
@@ -511,7 +548,12 @@ mod tests {
     }
 
     fn get_request_builder(proxy: Proxy, url: Url) -> RequestBuilder {
-        Client::builder().proxy(proxy).timeout(Duration::from_secs(30)).build().unwrap().get(url)
+        Client::builder()
+            .proxy(proxy)
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap()
+            .get(url)
     }
 
     #[tokio::test]
@@ -536,10 +578,19 @@ mod tests {
         let mut proxy_list = scraper_proxy.generate_proxy().await;
         let mut proxy_iter = ScraperProxy::sample_proxy(&mut proxy_list, 1);
         let request_builder_func = get_request_builder;
-        let content = web_scraper.request_with_proxy(&url, proxy_iter.next().unwrap().proxy.clone(), request_builder_func ,AsyncWebScraper::null_check_func).await;
+        let content = web_scraper
+            .request_with_proxy(
+                &url,
+                proxy_iter.next().unwrap().proxy.clone(),
+                request_builder_func,
+                AsyncWebScraper::null_check_func,
+            )
+            .await;
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let file = "test_scrape.html".to_owned();
-        web_scraper.save_request_content(&folder_path, &file, content.unwrap()).await;
+        web_scraper
+            .save_request_content(&folder_path, &file, content.unwrap())
+            .await;
     }
 
     #[tokio::test]
@@ -579,14 +630,16 @@ mod tests {
             calling_func,
             log_only: true,
         };
-        web_scraper.multiple_requests_with_proxy(
-            &url_file_list,
-            scraper_proxy,
-            request_builder_func,
-            &folder_path,
-            AsyncWebScraper::null_check_func,
-            request_setting,
-        ).await;
+        web_scraper
+            .multiple_requests_with_proxy(
+                &url_file_list,
+                scraper_proxy,
+                request_builder_func,
+                &folder_path,
+                AsyncWebScraper::null_check_func,
+                request_setting,
+            )
+            .await;
     }
 
     const WAIT_TIME: Duration = Duration::from_secs(5);
@@ -595,9 +648,11 @@ mod tests {
     async fn extra_action(web_driver: &mut WebDriver) -> WebDriverResult<()> {
         web_driver.set_implicit_wait_timeout(WAIT_TIME).await?;
         web_driver
-            .find(By::Css(ELEMENT_CSS)).await?
+            .find(By::Css(ELEMENT_CSS))
+            .await?
             .wait_until()
-            .displayed().await?;
+            .displayed()
+            .await?;
         Ok(())
     }
 
@@ -625,11 +680,20 @@ mod tests {
         let mut proxy_list = scraper_proxy.generate_proxy().await;
         let mut proxy_iter = ScraperProxy::sample_proxy(&mut proxy_list, 1);
         let browser = web_scraper.get_default_browser();
-        let content =
-            web_scraper.browse_request_with_proxy(&url, proxy_iter.next().unwrap().browser_proxy.clone(), &browser, &browse_action, AsyncWebScraper::null_check_func).await;
+        let content = web_scraper
+            .browse_request_with_proxy(
+                &url,
+                proxy_iter.next().unwrap().browser_proxy.clone(),
+                &browser,
+                &browse_action,
+                AsyncWebScraper::null_check_func,
+            )
+            .await;
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let file = "test_browse.html".to_owned();
-        web_scraper.save_request_content(&folder_path, &file, content.unwrap()).await;
+        web_scraper
+            .save_request_content(&folder_path, &file, content.unwrap())
+            .await;
         web_scraper.kill_chrome_process();
     }
 
@@ -670,16 +734,17 @@ mod tests {
             log_only: true,
         };
         web_scraper.turn_on_chrome_process();
-        web_scraper.multiple_browse_requests(
-            &url_file_list,
-            scraper_proxy,
-            &browser,
-            &folder_path,
-            &browse_action,
-            AsyncWebScraper::null_check_func,
-            browse_setting,
-        ).await;
+        web_scraper
+            .multiple_browse_requests(
+                &url_file_list,
+                scraper_proxy,
+                &browser,
+                &folder_path,
+                &browse_action,
+                AsyncWebScraper::null_check_func,
+                browse_setting,
+            )
+            .await;
         web_scraper.kill_chrome_process();
     }
-
 }

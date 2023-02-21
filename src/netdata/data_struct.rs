@@ -1,6 +1,5 @@
 use reqwest::Url;
 
-
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct UrlFile {
     pub url: Url,

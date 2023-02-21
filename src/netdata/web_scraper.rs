@@ -10,12 +10,11 @@ use thirtyfour_sync::error::WebDriverResult;
 use thirtyfour_sync::{ChromeCapabilities, WebDriver, WebDriverCommands};
 use tqdm;
 
+use super::data_struct::{BrowseSetting, RequestSetting, ResponseCheckResult, UrlFile};
 use crate::file_io::FileIO;
 use crate::logger::ProjectLogger;
 use crate::slack_messenger::SlackMessenger;
 use crate::{time_operation, utilities_function};
-use super::data_struct::{UrlFile, RequestSetting, BrowseSetting, ResponseCheckResult};
-
 
 #[derive(Debug)]
 pub struct WebScraper<'a> {
@@ -386,7 +385,8 @@ impl<'a> WebScraper<'a> {
     }
 
     pub fn save_request_content(&self, folder_path: &Path, file: &String, content: String) {
-        self.file_io.write_string_to_file(folder_path, file, &content);
+        self.file_io
+            .write_string_to_file(folder_path, file, &content);
     }
 
     pub fn multiple_requests(
@@ -408,7 +408,11 @@ impl<'a> WebScraper<'a> {
         if !fail_list.is_empty() {
             let fail_url_list = format!(
                 "The following urls were not loaded successfully:\n\n {}",
-                fail_list.iter().map(|x| x.url.as_str()).collect::<Vec<&str>>().join("\n")
+                fail_list
+                    .iter()
+                    .map(|x| x.url.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("\n")
             );
             self.project_logger.log_error(&fail_url_list);
             let fail_url_message = format!(
@@ -435,8 +439,12 @@ impl<'a> WebScraper<'a> {
         request_setting: RequestSetting,
     ) -> Vec<UrlFile> {
         let mut fail_list = Vec::new();
-        for (url_file, request_builder) in tqdm::tqdm(url_file_list.iter().zip(request_builder_list.iter())) {
-            if let Some(content)= self.retry_request_from_builder(request_builder, &url_file.url, check_func) {
+        for (url_file, request_builder) in
+            tqdm::tqdm(url_file_list.iter().zip(request_builder_list.iter()))
+        {
+            if let Some(content) =
+                self.retry_request_from_builder(request_builder, &url_file.url, check_func)
+            {
                 self.save_request_content(folder_path, &url_file.file_name, content);
             } else {
                 fail_list.push(url_file.clone())
@@ -446,7 +454,11 @@ impl<'a> WebScraper<'a> {
         if !fail_list.is_empty() {
             let fail_url_list = format!(
                 "The following urls were not loaded successfully:\n\n {}",
-                fail_list.iter().map(|x| x.url.as_str()).collect::<Vec<&str>>().join("\n")
+                fail_list
+                    .iter()
+                    .map(|x| x.url.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("\n")
             );
             self.project_logger.log_error(&fail_url_list);
             let fail_url_message = format!(
@@ -575,7 +587,9 @@ impl<'a> WebScraper<'a> {
     ) -> Vec<UrlFile> {
         let mut fail_list = Vec::new();
         for url_file in tqdm::tqdm(url_file_list.iter()) {
-            if let Some(content) = self.retry_browse_request(&url_file.url, browse_action, check_func) {
+            if let Some(content) =
+                self.retry_browse_request(&url_file.url, browse_action, check_func)
+            {
                 self.save_request_content(folder_path, &url_file.file_name, content);
             } else {
                 fail_list.push(url_file.clone())
@@ -588,7 +602,11 @@ impl<'a> WebScraper<'a> {
         if !fail_list.is_empty() {
             let fail_url_list = format!(
                 "The following urls were not browsed successfully:\n\n {}",
-                fail_list.iter().map(|x| x.url.as_str()).collect::<Vec<&str>>().join("\n")
+                fail_list
+                    .iter()
+                    .map(|x| x.url.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("\n")
             );
             self.project_logger.log_error(&fail_url_list);
             let fail_url_message = format!(
