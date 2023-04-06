@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration as LongDuration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc, Timelike};
 use chrono_tz::Tz;
 use rand::{thread_rng, Rng};
 use std::thread;
@@ -15,9 +15,14 @@ pub fn sleep(sleep_time: Duration) {
 }
 
 pub fn random_sleep((min_sleep_time, max_sleep_time): (Duration, Duration)) {
-    let mut rng = thread_rng();
-    let sleep_time = rng.gen_range(min_sleep_time..max_sleep_time);
-    thread::sleep(sleep_time);
+    if min_sleep_time == max_sleep_time {
+        thread::sleep(min_sleep_time)
+    } else {
+        let mut rng = thread_rng();
+        let sleep_time = rng.gen_range(min_sleep_time..max_sleep_time);
+        thread::sleep(sleep_time);
+    }
+    
 }
 
 pub async fn async_sleep(sleep_time: Duration) {
@@ -25,9 +30,13 @@ pub async fn async_sleep(sleep_time: Duration) {
 }
 
 pub async fn async_random_sleep((min_sleep_time, max_sleep_time): (Duration, Duration)) {
-    let mut rng = thread_rng();
-    let sleep_time = rng.gen_range(min_sleep_time..max_sleep_time);
-    time::sleep(sleep_time).await;
+    if min_sleep_time == max_sleep_time {
+        time::sleep(min_sleep_time).await
+    } else {
+        let mut rng = thread_rng();
+        let sleep_time = rng.gen_range(min_sleep_time..max_sleep_time);
+        time::sleep(sleep_time).await;
+    }
 }
 
 pub enum SecPrecision {
@@ -37,8 +46,9 @@ pub enum SecPrecision {
     NanoSec,
 }
 
-pub fn utc_now() -> DateTime<Utc> {
-    Utc::now()
+pub fn utc_start_of_today() -> DateTime<Utc> {
+    let date_time = Utc::now();
+    date_time - LongDuration::hours(date_time.hour().into()) - LongDuration::minutes(date_time.minute().into()) - LongDuration::seconds(date_time.second().into())
 }
 
 pub fn timestamp_now(precision: SecPrecision) -> i64 {

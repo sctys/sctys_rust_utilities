@@ -186,7 +186,7 @@ impl<'a> WebScraper<'a> {
         format!(
             "{}{}",
             &Self::WEB_DRIVER_PROG,
-            &self.web_driver_port.to_string()
+            self.web_driver_port
         )
     }
 
@@ -270,136 +270,147 @@ impl<'a> WebScraper<'a> {
         }
     }
 
-    pub fn null_check_func<T>(_response: &T) -> ResponseCheckResult {
-        ResponseCheckResult::Ok
+    pub fn null_check_func(response: &str) -> ResponseCheckResult {
+        ResponseCheckResult::Ok(response.to_string())
     }
 
     pub fn retry_request_simple(
         &mut self,
         url: &Url,
-        check_func: fn(&Response) -> ResponseCheckResult,
-    ) -> Option<String> {
+        check_func: fn(&str) -> ResponseCheckResult,
+    ) -> ResponseCheckResult {
         let mut counter = 0;
         while counter < self.num_retry {
             match self.get_request_simple(url.clone()) {
-                Ok(r) => match check_func(&r) {
-                    ResponseCheckResult::Ok => match r.text() {
-                        Ok(s) => {
-                            let debug_str = format!("Request {} loaded.", url.as_str());
-                            self.project_logger.log_debug(&debug_str);
-                            return Some(s);
+                Ok(response) => {
+                    if response.status().is_success() || response.status().is_redirection() {
+                        match response.text() {
+                            Ok(response_text) => match check_func(&response_text) {
+                                ResponseCheckResult::Ok(response_text) => {
+                                    let debug_str = format!("Request {} loaded.", url.as_str());
+                                    self.project_logger.log_debug(&debug_str);
+                                    return ResponseCheckResult::Ok(response_text)
+                                },
+                                ResponseCheckResult::ErrContinue(e) => {
+                                    let warn_str =
+                                        format!("Checking of the response failed for {}. {e}", url.as_str());
+                                    self.project_logger.log_warn(&warn_str);
+                                    counter += 1
+                                },
+                                ResponseCheckResult::ErrTerminate(e) => {
+                                    let warn_str = format!("Terminate to load the page {}. {e}", url.as_str());
+                                    self.project_logger.log_warn(&warn_str);
+                                    return ResponseCheckResult::ErrTerminate(e)
+                                }
+                            },
+                            Err(e) => {
+                                let warn_str = format!("Unable to decode the response text. {e}");
+                                self.project_logger.log_warn(&warn_str);
+                                counter += 1
+                            }
                         }
-                        Err(e) => {
-                            counter += 1;
-                            let warn_str = format!(
-                                "Unable to decode the response text for {} after trial . {e}",
-                                url.as_str()
-                            );
-                            self.project_logger.log_warn(&warn_str);
-                            time_operation::sleep(self.retry_sleep);
-                        }
-                    },
-                    ResponseCheckResult::ErrContinue(e) => {
-                        counter += 1;
-                        let warn_str = format!(
-                            "Checking of the response failed for {} after trial {counter}. {e}",
-                            url.as_str()
-                        );
+                    } else if response.status().is_server_error() {
+                        let warn_str =
+                            format!("Fail in loading the page {}. Server return status code {}", url.as_str(), response.status().as_str());
                         self.project_logger.log_warn(&warn_str);
-                        time_operation::sleep(self.retry_sleep);
-                    }
-                    ResponseCheckResult::ErrTerminate(e) => {
-                        let error_str = format!("Terminate to load the page {}. {e}", url.as_str());
-                        self.project_logger.log_error(&error_str);
-                        counter = self.num_retry;
+                        counter += 1
+                    } else {
+                        let warn_str = format!("Terminate to load the page {}. Server return status code {}", url.as_str(), response.status().as_str());
+                        self.project_logger.log_warn(&warn_str);
+                        counter += 1
                     }
                 },
                 Err(e) => {
-                    counter += 1;
-                    let warn_str = format!(
-                        "Unable to load the page {} after trial {counter}. {e}",
-                        url.as_str()
-                    );
+                    let warn_str = format!("Unable to load the page {}. {e}", url.as_str());
                     self.project_logger.log_warn(&warn_str);
-                    time_operation::sleep(self.retry_sleep);
+                    counter += 1
                 }
             }
         }
         let error_str = format!("Fail to load the page {}.", url.as_str());
         self.project_logger.log_error(&error_str);
-        None
+        ResponseCheckResult::ErrTerminate(error_str)
     }
 
     pub fn retry_request_from_builder(
         &mut self,
         request_builder: &RequestBuilder,
         url: &'a Url,
-        check_func: fn(&Response) -> ResponseCheckResult,
-    ) -> Option<String> {
+        check_func: fn(&str) -> ResponseCheckResult,
+    ) -> ResponseCheckResult {
         let mut counter = 0;
         while counter < self.num_retry {
             match self.get_request_from_builder(request_builder, url.clone()) {
-                Ok(r) => match check_func(&r) {
-                    ResponseCheckResult::Ok => match r.text() {
-                        Ok(s) => {
-                            let debug_str = format!("Request {} loaded.", url.as_str());
-                            self.project_logger.log_debug(&debug_str);
-                            return Some(s);
+                Ok(response) => {
+                    if response.status().is_success() || response.status().is_redirection() {
+                        match response.text() {
+                            Ok(response_text) => match check_func(&response_text) {
+                                ResponseCheckResult::Ok(response_text) => {
+                                    let debug_str = format!("Request {} loaded.", url.as_str());
+                                    self.project_logger.log_debug(&debug_str);
+                                    return ResponseCheckResult::Ok(response_text)
+                                },
+                                ResponseCheckResult::ErrContinue(e) => {
+                                    let warn_str =
+                                        format!("Checking of the response failed for {}. {e}", url.as_str());
+                                    self.project_logger.log_warn(&warn_str);
+                                    counter += 1;
+                                    time_operation::sleep(self.retry_sleep);
+                                },
+                                ResponseCheckResult::ErrTerminate(e) => {
+                                    let warn_str = format!("Terminate to load the page {}. {e}", url.as_str());
+                                    self.project_logger.log_warn(&warn_str);
+                                    return ResponseCheckResult::ErrTerminate(e)
+                                }
+                            },
+                            Err(e) => {
+                                let warn_str = format!("Unable to decode the response text. {e}");
+                                self.project_logger.log_warn(&warn_str);
+                                counter += 1
+                            }
                         }
-                        Err(e) => {
-                            counter += 1;
-                            let warn_str = format!("Unable to decode the response text. {e}");
-                            self.project_logger.log_warn(&warn_str);
-                            time_operation::sleep(self.retry_sleep)
-                        }
-                    },
-                    ResponseCheckResult::ErrContinue(e) => {
-                        counter += 1;
-                        let warn_str = format!(
-                            "Checking of the response failed for {} after trial {counter}. {e}",
-                            url.as_str()
-                        );
+                    } else if response.status().is_server_error() {
+                        let warn_str =
+                            format!("Fail in loading the page {}. Server return status code {}", url.as_str(), response.status().as_str());
                         self.project_logger.log_warn(&warn_str);
+                        counter += 1;
                         time_operation::sleep(self.retry_sleep);
-                    }
-                    ResponseCheckResult::ErrTerminate(e) => {
-                        let error_str = format!("Terminate to load the page {}. {e}", url.as_str());
-                        self.project_logger.log_error(&error_str);
-                        counter = self.num_retry;
+                    } else {
+                        let warn_str = format!("Terminate to load the page {}. Server return status code {}", url.as_str(), response.status().as_str());
+                        self.project_logger.log_warn(&warn_str);
+                        counter += 1;
+                        time_operation::sleep(self.retry_sleep);
                     }
                 },
                 Err(e) => {
-                    counter += 1;
-                    let warn_str = format!(
-                        "Unable to load the page {} after trial {counter}. {e}",
-                        url.as_str()
-                    );
+                    let warn_str = format!("Unable to load the page {}. {e}", url.as_str());
                     self.project_logger.log_warn(&warn_str);
-                    time_operation::sleep(self.retry_sleep)
+                    counter += 1;
+                    time_operation::sleep(self.retry_sleep);
                 }
             }
         }
         let error_str = format!("Fail to load the page {}.", url.as_str());
         self.project_logger.log_error(&error_str);
-        None
+        ResponseCheckResult::ErrTerminate(error_str)
     }
 
-    pub fn save_request_content(&self, folder_path: &Path, file: &String, content: String) {
+    pub fn save_request_content(&self, folder_path: &Path, file: &str, content: &str) {
         self.file_io
-            .write_string_to_file(folder_path, file, &content);
+            .write_string_to_file(folder_path, file, content);
     }
 
     pub fn multiple_requests(
         &mut self,
         url_file_list: &'a Vec<UrlFile>,
         folder_path: &Path,
-        check_func: fn(&Response) -> ResponseCheckResult,
+        check_func: fn(&str) -> ResponseCheckResult,
         request_setting: RequestSetting,
     ) -> Vec<UrlFile> {
         let mut fail_list = Vec::new();
         for url_file in tqdm::tqdm(url_file_list.iter()) {
-            if let Some(content) = self.retry_request_simple(&url_file.url, check_func) {
-                self.save_request_content(folder_path, &url_file.file_name, content);
+            if let ResponseCheckResult::Ok(content) = self.retry_request_simple(&url_file.url, check_func) {
+                self.save_request_content(folder_path, &url_file.file_name, &content);
             } else {
                 fail_list.push(url_file.clone())
             }
@@ -435,17 +446,17 @@ impl<'a> WebScraper<'a> {
         url_file_list: &'a Vec<UrlFile>,
         request_builder_list: &[RequestBuilder],
         folder_path: &Path,
-        check_func: fn(&Response) -> ResponseCheckResult,
+        check_func: fn(&str) -> ResponseCheckResult,
         request_setting: RequestSetting,
     ) -> Vec<UrlFile> {
         let mut fail_list = Vec::new();
         for (url_file, request_builder) in
             tqdm::tqdm(url_file_list.iter().zip(request_builder_list.iter()))
         {
-            if let Some(content) =
+            if let ResponseCheckResult::Ok(content) =
                 self.retry_request_from_builder(request_builder, &url_file.url, check_func)
             {
-                self.save_request_content(folder_path, &url_file.file_name, content);
+                self.save_request_content(folder_path, &url_file.file_name, &content);
             } else {
                 fail_list.push(url_file.clone())
             }
@@ -491,15 +502,15 @@ impl<'a> WebScraper<'a> {
         }
     }
 
-    pub fn retry_download_google_sheet(&mut self, google_sheet_link: &str) -> Option<String> {
+    pub fn retry_download_google_sheet(&mut self, google_sheet_link: &str) -> ResponseCheckResult {
         let google_sheet_url = Self::url_from_google_sheet_link(google_sheet_link);
         self.retry_request_simple(&google_sheet_url, Self::null_check_func)
     }
 
     pub fn convert_google_sheet_string_to_data_frame(
-        google_sheet_csv: Option<&String>,
+        google_sheet_csv: &str,
     ) -> Option<DataFrame> {
-        let cursor = Cursor::new(google_sheet_csv?);
+        let cursor = Cursor::new(google_sheet_csv);
         CsvReader::new(cursor).has_header(true).finish().ok()
     }
 
@@ -535,17 +546,17 @@ impl<'a> WebScraper<'a> {
         &mut self,
         url: &Url,
         browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
-        check_func: fn(&String) -> ResponseCheckResult,
-    ) -> Option<String> {
+        check_func: fn(&str) -> ResponseCheckResult,
+    ) -> ResponseCheckResult {
         let mut counter = 0;
         while counter < self.num_retry {
             match self.browse_request(url, browse_action) {
                 Ok(r) => {
                     match check_func(&r) {
-                        ResponseCheckResult::Ok => {
+                        ResponseCheckResult::Ok(r) => {
                             let debug_str = format!("Request {} browsed.", url.as_str());
                             self.project_logger.log_debug(&debug_str);
-                            return Some(r);
+                            return ResponseCheckResult::Ok(r);
                         }
                         ResponseCheckResult::ErrContinue(e) => {
                             counter += 1;
@@ -557,7 +568,7 @@ impl<'a> WebScraper<'a> {
                             let error_str =
                                 format!("Terminate to load the page {}. {e}", url.as_str());
                             self.project_logger.log_error(&error_str);
-                            counter = self.num_retry;
+                            return ResponseCheckResult::ErrTerminate(e)
                         }
                     };
                 }
@@ -574,7 +585,7 @@ impl<'a> WebScraper<'a> {
         }
         let error_str = format!("Fail to browse the page {}.", url.as_str());
         self.project_logger.log_error(&error_str);
-        None
+        ResponseCheckResult::ErrTerminate(error_str)
     }
 
     pub fn multiple_browse_requests(
@@ -582,15 +593,15 @@ impl<'a> WebScraper<'a> {
         url_file_list: &'a Vec<UrlFile>,
         folder_path: &Path,
         browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
-        check_func: fn(&String) -> ResponseCheckResult,
+        check_func: fn(&str) -> ResponseCheckResult,
         browse_setting: BrowseSetting,
     ) -> Vec<UrlFile> {
         let mut fail_list = Vec::new();
         for url_file in tqdm::tqdm(url_file_list.iter()) {
-            if let Some(content) =
+            if let ResponseCheckResult::Ok(content) =
                 self.retry_browse_request(&url_file.url, browse_action, check_func)
             {
-                self.save_request_content(folder_path, &url_file.file_name, content);
+                self.save_request_content(folder_path, &url_file.file_name, &content);
             } else {
                 fail_list.push(url_file.clone())
             }
@@ -683,8 +694,8 @@ mod tests {
         let url = Url::parse("https://tfl.gov.uk/travel-information/timetables/").unwrap();
         let content = web_scraper.retry_request_simple(&url, WebScraper::null_check_func);
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
-        let file = "test_scrape.html".to_owned();
-        web_scraper.save_request_content(&folder_path, &file, content.unwrap());
+        let file = "test_scrape.html";
+        web_scraper.save_request_content(&folder_path, file, &content.get_content().unwrap());
     }
 
     #[test]
@@ -707,12 +718,12 @@ mod tests {
         let url = "14Ep-CmoqWxrMU8HshxthRcdRW8IsXvh3n2-ZHVCzqzQ/edit#gid=1855920257";
         let content = web_scraper.retry_download_google_sheet(url);
         let mut data =
-            WebScraper::convert_google_sheet_string_to_data_frame(content.as_ref()).unwrap();
+            WebScraper::convert_google_sheet_string_to_data_frame(&content.get_content().unwrap()).unwrap();
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
-        let file = "test_google_sheet.parquet".to_owned();
+        let file = "test_google_sheet.parquet";
         web_scraper
             .file_io
-            .write_parquet_file(&folder_path, &file, &mut data);
+            .write_parquet_file(&folder_path, file, &mut data);
     }
 
     #[test]
@@ -746,6 +757,7 @@ mod tests {
         let request_setting = RequestSetting {
             calling_func,
             log_only: true,
+            in_s3: false
         };
         web_scraper.multiple_requests(
             &url_file_list,
@@ -790,8 +802,8 @@ mod tests {
         let content =
             web_scraper.retry_browse_request(&url, browse_action, WebScraper::null_check_func);
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
-        let file = "test_browse.html".to_owned();
-        web_scraper.save_request_content(&folder_path, &file, content.unwrap());
+        let file = "test_browse.html";
+        web_scraper.save_request_content(&folder_path, file, &content.get_content().unwrap());
         web_scraper.close_web_driver();
         web_scraper.kill_chrome_process();
     }
@@ -816,7 +828,7 @@ mod tests {
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
         let url_suffix = ["football/live", "football/results", "football/schedule"];
         let url = Url::parse("https://www.nowgoal.com/").unwrap();
-        let file = "test_browse{index}.html".to_owned();
+        let file = "test_browse{index}.html";
         let url_file_list = Vec::from_iter(url_suffix.iter().enumerate().map(|(i, x)| {
             UrlFile::new(
                 url.join(x).unwrap(),
@@ -829,6 +841,7 @@ mod tests {
             restart_web_driver: false,
             calling_func,
             log_only: true,
+            in_s3: false,
         };
         web_scraper.turn_on_chrome_process();
         web_scraper.multiple_browse_requests(

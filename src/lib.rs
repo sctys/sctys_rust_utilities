@@ -5,6 +5,8 @@ pub mod misc;
 pub mod netdata;
 
 pub use io::file_io;
+pub use io::aws_s3;
+pub use io::file_compress;
 pub use logging::logger;
 pub use messenger::slack_messenger;
 pub use misc::time_operation;

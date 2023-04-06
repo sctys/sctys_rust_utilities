@@ -14,7 +14,7 @@ use serde::Deserialize;
 use std::env;
 use std::fs;
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use toml;
@@ -48,7 +48,15 @@ impl<'a> AWSFileIO<'a> {
         }
     }
 
-    pub async fn check_bucket_exist(&self, bucket_name: &String) -> bool {
+    fn add_stash_for_folder_suffix(folder_name: &Path) -> PathBuf {
+        if folder_name.to_string_lossy().chars().last().unwrap_or_else(|| panic!("Folder name is empty")) != '/' {
+            folder_name.join("")
+        } else {
+            folder_name.to_path_buf()
+        }
+    }
+
+    pub async fn check_bucket_exist(&self, bucket_name: &str) -> bool {
         self.client
             .head_bucket()
             .bucket(bucket_name)
@@ -57,11 +65,11 @@ impl<'a> AWSFileIO<'a> {
             .is_ok()
     }
 
-    pub async fn check_folder_exist(&self, bucket_name: &String, folder_name: &String) -> bool {
+    pub async fn check_folder_exist(&self, bucket_name: &str, folder_name: &Path) -> bool {
         self.client
             .head_object()
             .bucket(bucket_name)
-            .key(folder_name)
+            .key(Self::add_stash_for_folder_suffix(folder_name).to_string_lossy())
             .send()
             .await
             .is_ok()
@@ -69,37 +77,37 @@ impl<'a> AWSFileIO<'a> {
 
     pub async fn check_file_exist(
         &self,
-        bucket_name: &String,
-        folder_name: &String,
-        file_name: &String,
+        bucket_name: &str,
+        folder_name: &Path,
+        file_name: &str,
     ) -> bool {
-        let full_path = format!("{folder_name}{file_name}");
+        let full_path = folder_name.join(file_name);
         self.client
             .head_object()
             .bucket(bucket_name)
-            .key(full_path)
+            .key(full_path.to_string_lossy())
             .send()
             .await
             .is_ok()
     }
 
-    pub async fn create_directory_if_not_exists(&self, bucket_name: &String, folder_name: &String) {
+    pub async fn create_directory_if_not_exists(&self, bucket_name: &str, folder_name: &Path) {
         if !self.check_folder_exist(bucket_name, folder_name).await {
             match self
                 .client
                 .put_object()
                 .bucket(bucket_name)
-                .key(folder_name)
+                .key(Self::add_stash_for_folder_suffix(folder_name).to_string_lossy())
                 .send()
                 .await
             {
                 Ok(_) => {
-                    let debug_str = format!("Folder {folder_name} created in bucket {bucket_name}");
+                    let debug_str = format!("Folder {} created in bucket {bucket_name}", folder_name.display());
                     self.project_logger.log_debug(&debug_str);
                 }
                 Err(e) => {
                     let error_str = format!(
-                        "Unable to create folder {folder_name} in bucket {bucket_name}. {e}"
+                        "Unable to create folder {} in bucket {bucket_name}. {e}", folder_name.display()
                     );
                     self.project_logger.log_error(&error_str);
                 }
@@ -109,21 +117,21 @@ impl<'a> AWSFileIO<'a> {
 
     pub async fn get_elements_in_folder(
         &self,
-        bucket_name: &String,
-        folder_name: &String,
+        bucket_name: &str,
+        folder_name: &Path,
     ) -> ListObjectsV2Output {
         match self
             .client
             .list_objects_v2()
             .bucket(bucket_name)
-            .prefix(folder_name)
+            .prefix(Self::add_stash_for_folder_suffix(folder_name).to_string_lossy())
             .send()
             .await
         {
             Ok(object_list) => object_list,
             Err(e) => {
                 let error_str =
-                    format!("Unable to get the list of file in folder {folder_name}, {e}");
+                    format!("Unable to get the list of file in folder {}, {e}", folder_name.display());
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}")
             }
@@ -162,29 +170,29 @@ impl<'a> AWSFileIO<'a> {
 
     pub async fn load_file_as_string(
         &self,
-        bucket_name: &String,
-        folder_path: &String,
-        file: &String,
+        bucket_name: &str,
+        folder_path: &Path,
+        file: &str,
     ) -> String {
-        let full_path = format!("{folder_path}{file}");
+        let full_path = folder_path.join(file);
         match self
             .client
             .get_object()
             .bucket(bucket_name)
-            .key(&full_path)
+            .key(full_path.to_string_lossy())
             .send()
             .await
         {
             Ok(get_object) => match get_object.body.collect().await {
                 Ok(byte) => String::from_utf8_lossy(&byte.to_vec()).to_string(),
                 Err(e) => {
-                    let error_str = format!("Unable to read the file {file} from folder {folder_path} in bucket {bucket_name}. {e}");
+                    let error_str = format!("Unable to read the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
                     self.project_logger.log_error(&error_str);
                     panic!("{error_str}");
                 }
             },
             Err(e) => {
-                let error_str = format!("Unable to get the file {file} from folder {folder_path} in bucket {bucket_name}. {e}");
+                let error_str = format!("Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}");
             }
@@ -193,28 +201,28 @@ impl<'a> AWSFileIO<'a> {
 
     pub async fn write_string_to_file(
         &self,
-        bucket_name: &String,
-        folder_path: &String,
-        file: &String,
+        bucket_name: &str,
+        folder_path: &Path,
+        file: &str,
         content: &str,
     ) {
-        let full_path = format!("{folder_path}{file}");
+        let full_path = folder_path.join(file);
         let content_byte = ByteStream::new(SdkBody::from(content));
         match self
             .client
             .put_object()
             .bucket(bucket_name)
-            .key(&full_path)
+            .key(full_path.to_string_lossy())
             .body(content_byte)
             .send()
             .await
         {
             Ok(_) => {
-                let debug_str = format!("File {full_path} saved in bucket {bucket_name}");
+                let debug_str = format!("File {} saved in bucket {bucket_name}", full_path.display());
                 self.project_logger.log_debug(&debug_str);
             }
             Err(e) => {
-                let error_str = format!("Unable to save {full_path} in bucket {bucket_name}, {e}");
+                let error_str = format!("Unable to save {} in bucket {bucket_name}, {e}", full_path.display());
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}")
             }
@@ -223,16 +231,16 @@ impl<'a> AWSFileIO<'a> {
 
     pub async fn load_csv_file(
         &self,
-        bucket_name: &String,
-        folder_path: &String,
-        file: &String,
+        bucket_name: &str,
+        folder_path: &Path,
+        file: &str,
     ) -> DataFrame {
-        let full_path = format!("{folder_path}{file}");
+        let full_path = folder_path.join(file);
         match self
             .client
             .get_object()
             .bucket(bucket_name)
-            .key(&full_path)
+            .key(full_path.to_string_lossy())
             .send()
             .await
         {
@@ -242,20 +250,20 @@ impl<'a> AWSFileIO<'a> {
                     match CsvReader::new(cursor).has_header(true).finish() {
                         Ok(df) => df,
                         Err(e) => {
-                            let error_str = format!("Unable to convert the bytes from file {file} from folder {folder_path} in bucket {bucket_name} into data frame. {e}");
+                            let error_str = format!("Unable to convert the bytes from file {file} from folder {} in bucket {bucket_name} into data frame. {e}", folder_path.display());
                             self.project_logger.log_error(&error_str);
                             panic!("{error_str}");
                         }
                     }
                 }
                 Err(e) => {
-                    let error_str = format!("Unable to read the file {file} from folder {folder_path} in bucket {bucket_name}. {e}");
+                    let error_str = format!("Unable to read the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
                     self.project_logger.log_error(&error_str);
                     panic!("{error_str}");
                 }
             },
             Err(e) => {
-                let error_str = format!("Unable to get the file {file} from folder {folder_path} in bucket {bucket_name}. {e}");
+                let error_str = format!("Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}");
             }
@@ -264,12 +272,12 @@ impl<'a> AWSFileIO<'a> {
 
     pub async fn write_csv_file(
         &self,
-        bucket_name: &String,
-        folder_path: &String,
-        file: &String,
+        bucket_name: &str,
+        folder_path: &Path,
+        file: &str,
         data: &mut DataFrame,
     ) {
-        let full_path = format!("{folder_path}{file}");
+        let full_path = folder_path.join(file);
         let mut buffer = Vec::new();
         let cursor = Cursor::new(&mut buffer);
         let csv_writer = CsvWriter::new(cursor);
@@ -284,25 +292,25 @@ impl<'a> AWSFileIO<'a> {
                     .client
                     .put_object()
                     .bucket(bucket_name)
-                    .key(&full_path)
+                    .key(full_path.to_string_lossy())
                     .body(csv_string)
                     .send()
                     .await
                 {
                     Ok(_) => {
-                        let debug_str = format!("File {full_path} saved in bucket {bucket_name}");
+                        let debug_str = format!("File {} saved in bucket {bucket_name}", full_path.display());
                         self.project_logger.log_debug(&debug_str);
                     }
                     Err(e) => {
                         let error_str =
-                            format!("Unable to save {full_path} in bucket {bucket_name}, {e}");
+                            format!("Unable to save {} in bucket {bucket_name}, {e}", full_path.display());
                         self.project_logger.log_error(&error_str);
                         panic!("{error_str}");
                     }
                 }
             }
             Err(e) => {
-                let error_str = format!("Unable to convert {full_path} into bytestream. {e}");
+                let error_str = format!("Unable to convert {} into bytestream. {e}", full_path.display());
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}");
             }
@@ -311,16 +319,16 @@ impl<'a> AWSFileIO<'a> {
 
     pub async fn load_parquet_file(
         &self,
-        bucket_name: &String,
-        folder_path: &String,
-        file: &String,
+        bucket_name: &str,
+        folder_path: &Path,
+        file: &str,
     ) -> DataFrame {
-        let full_path = format!("{folder_path}{file}");
+        let full_path = folder_path.join(file);
         match self
             .client
             .get_object()
             .bucket(bucket_name)
-            .key(&full_path)
+            .key(full_path.to_string_lossy())
             .send()
             .await
         {
@@ -330,20 +338,20 @@ impl<'a> AWSFileIO<'a> {
                     match ParquetReader::new(cursor).finish() {
                         Ok(df) => df,
                         Err(e) => {
-                            let error_str = format!("Unable to convert the bytes from file {file} from folder {folder_path} in bucket {bucket_name} into data frame. {e}");
+                            let error_str = format!("Unable to convert the bytes from file {file} from folder {} in bucket {bucket_name} into data frame. {e}", folder_path.display());
                             self.project_logger.log_error(&error_str);
                             panic!("{error_str}");
                         }
                     }
                 }
                 Err(e) => {
-                    let error_str = format!("Unable to read the file {file} from folder {folder_path} in bucket {bucket_name}. {e}");
+                    let error_str = format!("Unable to read the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
                     self.project_logger.log_error(&error_str);
                     panic!("{error_str}")
                 }
             },
             Err(e) => {
-                let error_str = format!("Unable to get the file {file} from folder {folder_path} in bucket {bucket_name}. {e}");
+                let error_str = format!("Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}")
             }
@@ -352,12 +360,12 @@ impl<'a> AWSFileIO<'a> {
 
     pub async fn write_parquet_file(
         &self,
-        bucket_name: &String,
-        folder_path: &String,
-        file: &String,
+        bucket_name: &str,
+        folder_path: &Path,
+        file: &str,
         data: &mut DataFrame,
     ) {
-        let full_path = format!("{folder_path}{file}");
+        let full_path = folder_path.join(file);
         let mut buffer = Vec::new();
         let cursor = Cursor::new(&mut buffer);
         let parquet_writer = ParquetWriter::new(cursor);
@@ -368,25 +376,25 @@ impl<'a> AWSFileIO<'a> {
                     .client
                     .put_object()
                     .bucket(bucket_name)
-                    .key(&full_path)
+                    .key(full_path.to_string_lossy())
                     .body(parquet_string)
                     .send()
                     .await
                 {
                     Ok(_) => {
-                        let debug_str = format!("File {full_path} saved in bucket {bucket_name}");
+                        let debug_str = format!("File {} saved in bucket {bucket_name}", full_path.display());
                         self.project_logger.log_debug(&debug_str);
                     }
                     Err(e) => {
                         let error_str =
-                            format!("Unable to save {full_path} in bucket {bucket_name}, {e}");
+                            format!("Unable to save {} in bucket {bucket_name}, {e}", full_path.display());
                         self.project_logger.log_error(&error_str);
                         panic!("{error_str}")
                     }
                 }
             }
             Err(e) => {
-                let error_str = format!("Unable to convert {full_path} into bytestream. {e}");
+                let error_str = format!("Unable to convert {} into bytestream. {e}", full_path.display());
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}")
             }
@@ -395,18 +403,18 @@ impl<'a> AWSFileIO<'a> {
 
     pub async fn download_file(
         &self,
-        bucket_name: &String,
-        folder_path: &String,
-        file: &String,
+        bucket_name: &str,
+        folder_path: &Path,
+        file: &str,
         local_path: &Path,
-        local_file: &String,
+        local_file: &str,
     ) {
-        let full_path = format!("{folder_path}{file}");
+        let full_path = folder_path.join(file);
         match self
             .client
             .get_object()
             .bucket(bucket_name)
-            .key(&full_path)
+            .key(full_path.to_string_lossy())
             .send()
             .await
         {
@@ -415,25 +423,25 @@ impl<'a> AWSFileIO<'a> {
                     let full_local_path = local_path.join(local_file);
                     match tokio::fs::write(&full_local_path, byte.to_vec()).await {
                         Ok(_) => {
-                            let debug_str = format!("File {} downloaded.", &full_path);
+                            let debug_str = format!("File {} downloaded.", full_path.display());
                             self.project_logger.log_debug(&debug_str);
                         }
                         Err(e) => {
                             let error_str =
-                                format!("Unable to download to file {}. {e}", &full_path);
+                                format!("Unable to download to file {}. {e}", full_path.display());
                             self.project_logger.log_error(&error_str);
                             panic!("{}", &error_str);
                         }
                     };
                 }
                 Err(e) => {
-                    let error_str = format!("Unable to read the file {file} from folder {folder_path} in bucket {bucket_name}. {e}");
+                    let error_str = format!("Unable to read the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
                     self.project_logger.log_error(&error_str);
                     panic!("{error_str}");
                 }
             },
             Err(e) => {
-                let error_str = format!("Unable to get the file {file} from folder {folder_path} in bucket {bucket_name}. {e}");
+                let error_str = format!("Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}");
             }
@@ -442,11 +450,11 @@ impl<'a> AWSFileIO<'a> {
 
     pub async fn upload_file(
         &self,
-        bucket_name: &String,
-        folder_path: &String,
-        file: &String,
+        bucket_name: &str,
+        folder_path: &Path,
+        file: &str,
         local_path: &Path,
-        local_file: &String,
+        local_file: &str,
     ) {
         let full_local_path = local_path.join(local_file);
         match File::open(&full_local_path).await {
@@ -455,23 +463,23 @@ impl<'a> AWSFileIO<'a> {
                 match temp_file.read_to_end(&mut bytes).await {
                     Ok(_) => {
                         let content = ByteStream::from(bytes);
-                        let full_path = format!("{folder_path}{file}");
+                        let full_path = folder_path.join(file);
                         match self
                             .client
                             .put_object()
                             .bucket(bucket_name)
-                            .key(&full_path)
+                            .key(full_path.to_string_lossy())
                             .body(content)
                             .send()
                             .await
                         {
                             Ok(_) => {
-                                let debug_str = format!("File {} uploaded.", &full_path);
+                                let debug_str = format!("File {} uploaded.", full_path.display());
                                 self.project_logger.log_debug(&debug_str);
                             }
                             Err(e) => {
                                 let error_str =
-                                    format!("Unable to upload to file {}. {e}", &full_path);
+                                    format!("Unable to upload to file {}. {e}", full_path.display());
                                 self.project_logger.log_error(&error_str);
                                 panic!("{}", &error_str);
                             }
@@ -496,6 +504,42 @@ impl<'a> AWSFileIO<'a> {
                 panic!("{error_str}");
             }
         }
+    }
+
+    pub async fn delete_file(
+        &self,
+        bucket_name: &str,
+        folder_path: &Path,
+        file: &str,
+    ) {
+        let full_path = folder_path.join(file);
+        match self
+            .client
+            .delete_object()
+            .bucket(bucket_name)
+            .key(full_path.to_string_lossy())
+            .send()
+            .await
+        {
+            Ok(_) => {
+                let debug_str = format!("File {} deleted.", full_path.display());
+                self.project_logger.log_debug(&debug_str);
+            }
+            Err(e) => {
+                let error_str =
+                    format!("Unable to delete to file {}. {e}", full_path.display());
+                self.project_logger.log_error(&error_str);
+                panic!("{}", &error_str);
+            }
+        };
+    }
+
+    pub async fn delete_folder(
+        &self,
+        bucket_name: &str,
+        folder_path: &Path,
+    ) {
+        self.delete_file(bucket_name, folder_path, "").await;
     }
 }
 
@@ -544,10 +588,10 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
-        let bucket_name = "sctys".to_string();
-        assert!(aws_file_io.check_bucket_exist(&bucket_name).await);
-        let bucket_name = "abc".to_string();
-        assert!(!aws_file_io.check_bucket_exist(&bucket_name).await);
+        let bucket_name = "sctys";
+        assert!(aws_file_io.check_bucket_exist(bucket_name).await);
+        let bucket_name = "abc";
+        assert!(!aws_file_io.check_bucket_exist(bucket_name).await);
     }
 
     #[tokio::test]
@@ -559,17 +603,17 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
-        let bucket_name = "sctys".to_string();
-        let folder_name = "data/poisson_football/".to_string();
+        let bucket_name = "sctys";
+        let folder_name = Path::new("data/poisson_football");
         assert!(
             aws_file_io
-                .check_folder_exist(&bucket_name, &folder_name)
+                .check_folder_exist(bucket_name, folder_name)
                 .await
         );
-        let folder_name = "abc".to_string();
+        let folder_name = Path::new("abc");
         assert!(
             !aws_file_io
-                .check_folder_exist(&bucket_name, &folder_name)
+                .check_folder_exist(bucket_name, folder_name)
                 .await
         );
     }
@@ -583,18 +627,18 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
-        let bucket_name = "sctys".to_string();
-        let folder_name = "data/poisson_football/".to_string();
-        let file_name = "test_list.html".to_string();
+        let bucket_name = "sctys";
+        let folder_name = Path::new("data/poisson_football/");
+        let file_name = "test_list.html";
         assert!(
             aws_file_io
-                .check_file_exist(&bucket_name, &folder_name, &file_name)
+                .check_file_exist(bucket_name, folder_name, file_name)
                 .await
         );
-        let file_name = "abc".to_string();
+        let file_name = "abc";
         assert!(
             !aws_file_io
-                .check_file_exist(&bucket_name, &folder_name, &file_name)
+                .check_file_exist(bucket_name, folder_name, file_name)
                 .await
         );
     }
@@ -608,10 +652,10 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
-        let bucket_name = "sctys".to_string();
-        let folder_name = "data/test_folder/".to_string();
+        let bucket_name = "sctys";
+        let folder_name = Path::new("data/test_folder/");
         aws_file_io
-            .create_directory_if_not_exists(&bucket_name, &folder_name)
+            .create_directory_if_not_exists(bucket_name, folder_name)
             .await;
     }
 
@@ -624,10 +668,10 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
-        let bucket_name = "sctys".to_string();
-        let folder_name = "data/poisson_football/".to_string();
+        let bucket_name = "sctys";
+        let folder_name = Path::new("data/poisson_football");
         let elements = aws_file_io
-            .get_elements_in_folder(&bucket_name, &folder_name)
+            .get_elements_in_folder(bucket_name, folder_name)
             .await;
         println!("{:?}", elements.contents().unwrap());
     }
@@ -641,11 +685,11 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
-        let bucket_name = "sctys".to_string();
-        let folder_name = "data/poisson_football/".to_string();
-        let file_name = "test_list.html".to_string();
+        let bucket_name = "sctys";
+        let folder_name = Path::new("data/poisson_football/");
+        let file_name = "test_list.html";
         let content = aws_file_io
-            .load_file_as_string(&bucket_name, &folder_name, &file_name)
+            .load_file_as_string(bucket_name, folder_name, file_name)
             .await;
         println!("{:?}", content);
     }
@@ -660,14 +704,14 @@ mod tests {
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let local_folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
-        let local_file = "test.html".to_owned();
+        let local_file = "test.html";
         let file_io = FileIO::new(&project_logger);
-        let data = file_io.load_file_as_string(&local_folder_path, &local_file);
-        let bucket_name = "sctys".to_string();
-        let folder_name = "data/test_folder/".to_string();
-        let file_name = "test_aws.html".to_string();
+        let data = file_io.load_file_as_string(&local_folder_path, local_file);
+        let bucket_name = "sctys";
+        let folder_name = Path::new("data/test_folder/");
+        let file_name = "test_aws.html";
         aws_file_io
-            .write_string_to_file(&bucket_name, &folder_name, &file_name, data.as_str())
+            .write_string_to_file(bucket_name, folder_name, file_name, data.as_str())
             .await;
     }
 
@@ -680,11 +724,11 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
-        let bucket_name = "sctys".to_string();
-        let folder_name = "data/test_folder/".to_string();
-        let file_name = "test.csv".to_string();
+        let bucket_name = "sctys";
+        let folder_name = Path::new("data/test_folder/");
+        let file_name = "test.csv";
         let content = aws_file_io
-            .load_csv_file(&bucket_name, &folder_name, &file_name)
+            .load_csv_file(bucket_name, folder_name, file_name)
             .await;
         println!("{:?}", content);
     }
@@ -700,13 +744,13 @@ mod tests {
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let local_folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
-        let local_file = "test_new.csv".to_owned();
-        let mut data = file_io.load_csv_file(&local_folder_path, &local_file);
-        let bucket_name = "sctys".to_string();
-        let folder_name = "data/test_folder/".to_string();
-        let file_name = "test_new_aws.csv".to_string();
+        let local_file = "test_new.csv";
+        let mut data = file_io.load_csv_file(&local_folder_path, local_file);
+        let bucket_name = "sctys";
+        let folder_name = Path::new("data/test_folder/");
+        let file_name = "test_new_aws.csv";
         aws_file_io
-            .write_csv_file(&bucket_name, &folder_name, &file_name, &mut data)
+            .write_csv_file(bucket_name, folder_name, file_name, &mut data)
             .await;
     }
 
@@ -721,16 +765,16 @@ mod tests {
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let local_folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
-        let local_file = "test.parquet".to_owned();
-        let mut data = file_io.load_parquet_file(&local_folder_path, &local_file);
-        let bucket_name = "sctys".to_string();
-        let folder_name = "data/test_folder/".to_string();
-        let file_name = "test_aws.parquet".to_string();
+        let local_file = "test.parquet";
+        let mut data = file_io.load_parquet_file(&local_folder_path, local_file);
+        let bucket_name = "sctys";
+        let folder_name = Path::new("data/test_folder/");
+        let file_name = "test_aws.parquet";
         aws_file_io
-            .write_parquet_file(&bucket_name, &folder_name, &file_name, &mut data)
+            .write_parquet_file(bucket_name, folder_name, file_name, &mut data)
             .await;
         let content = aws_file_io
-            .load_parquet_file(&bucket_name, &folder_name, &file_name)
+            .load_parquet_file(bucket_name, folder_name, file_name)
             .await;
         println!("{:?}", content);
     }
@@ -745,17 +789,17 @@ mod tests {
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let local_folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
-        let local_file = "test_aws.parquet".to_owned();
-        let bucket_name = "sctys".to_string();
-        let folder_name = "data/test_folder/".to_string();
-        let file_name = "test_aws.parquet".to_string();
+        let local_file = "test_aws.parquet";
+        let bucket_name = "sctys";
+        let folder_name = Path::new("data/test_folder/");
+        let file_name = "test_aws.parquet";
         aws_file_io
             .download_file(
-                &bucket_name,
-                &folder_name,
-                &file_name,
+                bucket_name,
+                folder_name,
+                file_name,
                 &local_folder_path,
-                &local_file,
+                local_file,
             )
             .await;
     }
@@ -770,17 +814,17 @@ mod tests {
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let local_folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
-        let local_file = "test_scrape.html".to_owned();
-        let bucket_name = "sctys".to_string();
-        let folder_name = "data/test_folder/".to_string();
-        let file_name = "test_scrape_aws.html".to_string();
+        let local_file = "test_scrape.html";
+        let bucket_name = "sctys";
+        let folder_name = Path::new("data/test_folder/");
+        let file_name = "test_scrape_aws.html";
         aws_file_io
             .upload_file(
-                &bucket_name,
-                &folder_name,
-                &file_name,
+                bucket_name,
+                folder_name,
+                file_name,
                 &local_folder_path,
-                &local_file,
+                local_file,
             )
             .await;
     }

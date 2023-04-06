@@ -17,7 +17,7 @@ impl<'a> FileCompress<'a> {
     pub fn get_gz_compressor(
         &self,
         folder_path: &Path,
-        compressed_file_name: &String,
+        compressed_file_name: &str,
     ) -> Builder<GzEncoder<File>> {
         let full_path = folder_path.join(compressed_file_name);
         match File::create(&full_path) {
@@ -39,7 +39,7 @@ impl<'a> FileCompress<'a> {
     pub fn get_bz2_compressor(
         &self,
         folder_path: &Path,
-        compressed_file_name: &String,
+        compressed_file_name: &str,
     ) -> Builder<BzEncoder<File>> {
         let full_path = folder_path.join(compressed_file_name);
         match File::create(&full_path) {
@@ -62,7 +62,7 @@ impl<'a> FileCompress<'a> {
         &self,
         folder_path: &Path,
         archive_path: &Path,
-        file_name: &String,
+        file_name: &str,
         builder: &mut Builder<W>,
     ) {
         let full_path = folder_path.join(file_name);

@@ -37,9 +37,9 @@ impl ProjectLogger {
         let error_logger_name = format!("{logger_name}_error");
         let standard_logger_file_name = format!("{logger_name}.log");
         let error_logger_file_name = format!("{}.log", &error_logger_name);
-        let full_logger_path_file = logger_path.join(&standard_logger_file_name);
+        let full_logger_path_file = logger_path.join(standard_logger_file_name);
         let full_error_logger_path_file = logger_path.join(error_logger_file_name);
-        let archive_logger_file_name = standard_logger_file_name.replace(".log", "_log_{}.gz");
+        let archive_logger_file_name = full_logger_path_file.to_str().unwrap_or_else(|| panic!("Unable to convert full logger path file to str.")).replace(".log", "_log_{}.gz");
         Self {
             logger_name: logger_name.to_owned(),
             error_logger_name,
@@ -115,32 +115,32 @@ impl ProjectLogger {
             .unwrap_or_else(|_| panic!("Error in init_config for {}", self.logger_name))
     }
 
-    pub fn log_trace(&self, message: &String) {
+    pub fn log_trace(&self, message: &str) {
         trace!(target: &self.logger_name, "{message}");
     }
 
-    pub fn log_debug(&self, message: &String) {
+    pub fn log_debug(&self, message: &str) {
         debug!(target: &self.logger_name, "{message}");
     }
 
-    pub fn log_info(&self, message: &String) {
+    pub fn log_info(&self, message: &str) {
         info!(target: &self.logger_name, "{message}");
     }
 
-    pub fn log_warn(&self, message: &String) {
+    pub fn log_warn(&self, message: &str) {
         warn!(target: &self.logger_name, "{message}");
     }
 
-    pub fn log_error(&self, message: &String) {
+    pub fn log_error(&self, message: &str) {
         error!(target: &self.logger_name, "{message}");
         error!(target: &self.error_logger_name, "{message}");
     }
 
-    pub fn get_logger_name(&self) -> &String {
+    pub fn get_logger_name(&self) -> &str {
         &self.logger_name
     }
 
-    pub fn get_error_logger_name(&self) -> &String {
+    pub fn get_error_logger_name(&self) -> &str {
         &self.error_logger_name
     }
 

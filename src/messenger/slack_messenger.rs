@@ -24,8 +24,8 @@ pub struct SlackMessenger<'a> {
 
 impl<'a> SlackMessenger<'a> {
     pub fn new(
-        main_channel_id: &'a String,
-        log_channel_id: &'a String,
+        main_channel_id: &'a str,
+        log_channel_id: &'a str,
         logger: &'a ProjectLogger,
     ) -> Self {
         let api_token = APIKey::load_apikey();
@@ -55,7 +55,7 @@ impl<'a> SlackMessenger<'a> {
         self.retry_sleep = retry_sleep;
     }
 
-    pub fn retry_send_message(&self, calling_func: &str, message: &String, log_only: bool) {
+    pub fn retry_send_message(&self, calling_func: &str, message: &str, log_only: bool) {
         let channel_id = self.get_channel_id(log_only);
         let client = match slack::api::requests::default_client() {
             Ok(c) => c,
@@ -164,7 +164,7 @@ mod tests {
         let calling_func = utilities_function::function_name!(true);
         slack_messenger.retry_send_message(
             calling_func,
-            &"Test message from rust".to_owned(),
+            "Test message from rust",
             false,
         );
     }
