@@ -26,6 +26,8 @@ pub struct AWSFileIO<'a> {
 }
 
 impl<'a> AWSFileIO<'a> {
+    const MAX_KEY: i32 = 100;
+
     pub async fn new(project_logger: &'a ProjectLogger) -> AWSFileIO {
         let api_key = APIKey::load_apikey();
         let credentials = Credentials::new(
@@ -49,7 +51,13 @@ impl<'a> AWSFileIO<'a> {
     }
 
     fn add_stash_for_folder_suffix(folder_name: &Path) -> PathBuf {
-        if folder_name.to_string_lossy().chars().last().unwrap_or_else(|| panic!("Folder name is empty")) != '/' {
+        if folder_name
+            .to_string_lossy()
+            .chars()
+            .last()
+            .unwrap_or_else(|| panic!("Folder name is empty"))
+            != '/'
+        {
             folder_name.join("")
         } else {
             folder_name.to_path_buf()
@@ -102,12 +110,16 @@ impl<'a> AWSFileIO<'a> {
                 .await
             {
                 Ok(_) => {
-                    let debug_str = format!("Folder {} created in bucket {bucket_name}", folder_name.display());
+                    let debug_str = format!(
+                        "Folder {} created in bucket {bucket_name}",
+                        folder_name.display()
+                    );
                     self.project_logger.log_debug(&debug_str);
                 }
                 Err(e) => {
                     let error_str = format!(
-                        "Unable to create folder {} in bucket {bucket_name}. {e}", folder_name.display()
+                        "Unable to create folder {} in bucket {bucket_name}. {e}",
+                        folder_name.display()
                     );
                     self.project_logger.log_error(&error_str);
                 }
@@ -119,23 +131,39 @@ impl<'a> AWSFileIO<'a> {
         &self,
         bucket_name: &str,
         folder_name: &Path,
-    ) -> ListObjectsV2Output {
-        match self
-            .client
-            .list_objects_v2()
-            .bucket(bucket_name)
-            .prefix(Self::add_stash_for_folder_suffix(folder_name).to_string_lossy())
-            .send()
-            .await
-        {
-            Ok(object_list) => object_list,
-            Err(e) => {
-                let error_str =
-                    format!("Unable to get the list of file in folder {}, {e}", folder_name.display());
-                self.project_logger.log_error(&error_str);
-                panic!("{error_str}")
+    ) -> Vec<ListObjectsV2Output> {
+        let mut object_output_list = Vec::new();
+        let mut is_last_page = false;
+        let mut continuation_token = None;
+        while !is_last_page {
+            match self
+                .client
+                .list_objects_v2()
+                .bucket(bucket_name)
+                .prefix(Self::add_stash_for_folder_suffix(folder_name).to_string_lossy())
+                .set_continuation_token(continuation_token)
+                .max_keys(Self::MAX_KEY)
+                .send()
+                .await
+            {
+                Ok(object_list) => {
+                    continuation_token = object_list.next_continuation_token().map(str::to_string);
+                    if !object_list.is_truncated() {
+                        is_last_page = true;
+                    }
+                    object_output_list.push(object_list);
+                }
+                Err(e) => {
+                    let error_str = format!(
+                        "Unable to get the list of file in folder {}, {e}",
+                        folder_name.display()
+                    );
+                    self.project_logger.log_error(&error_str);
+                    panic!("{error_str}")
+                }
             }
         }
+        object_output_list
     }
 
     pub fn filter_element_after<T: TimeZone>(
@@ -192,7 +220,10 @@ impl<'a> AWSFileIO<'a> {
                 }
             },
             Err(e) => {
-                let error_str = format!("Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
+                let error_str = format!(
+                    "Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}",
+                    folder_path.display()
+                );
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}");
             }
@@ -218,11 +249,15 @@ impl<'a> AWSFileIO<'a> {
             .await
         {
             Ok(_) => {
-                let debug_str = format!("File {} saved in bucket {bucket_name}", full_path.display());
+                let debug_str =
+                    format!("File {} saved in bucket {bucket_name}", full_path.display());
                 self.project_logger.log_debug(&debug_str);
             }
             Err(e) => {
-                let error_str = format!("Unable to save {} in bucket {bucket_name}, {e}", full_path.display());
+                let error_str = format!(
+                    "Unable to save {} in bucket {bucket_name}, {e}",
+                    full_path.display()
+                );
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}")
             }
@@ -263,7 +298,10 @@ impl<'a> AWSFileIO<'a> {
                 }
             },
             Err(e) => {
-                let error_str = format!("Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
+                let error_str = format!(
+                    "Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}",
+                    folder_path.display()
+                );
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}");
             }
@@ -298,19 +336,25 @@ impl<'a> AWSFileIO<'a> {
                     .await
                 {
                     Ok(_) => {
-                        let debug_str = format!("File {} saved in bucket {bucket_name}", full_path.display());
+                        let debug_str =
+                            format!("File {} saved in bucket {bucket_name}", full_path.display());
                         self.project_logger.log_debug(&debug_str);
                     }
                     Err(e) => {
-                        let error_str =
-                            format!("Unable to save {} in bucket {bucket_name}, {e}", full_path.display());
+                        let error_str = format!(
+                            "Unable to save {} in bucket {bucket_name}, {e}",
+                            full_path.display()
+                        );
                         self.project_logger.log_error(&error_str);
                         panic!("{error_str}");
                     }
                 }
             }
             Err(e) => {
-                let error_str = format!("Unable to convert {} into bytestream. {e}", full_path.display());
+                let error_str = format!(
+                    "Unable to convert {} into bytestream. {e}",
+                    full_path.display()
+                );
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}");
             }
@@ -351,7 +395,10 @@ impl<'a> AWSFileIO<'a> {
                 }
             },
             Err(e) => {
-                let error_str = format!("Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
+                let error_str = format!(
+                    "Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}",
+                    folder_path.display()
+                );
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}")
             }
@@ -382,19 +429,25 @@ impl<'a> AWSFileIO<'a> {
                     .await
                 {
                     Ok(_) => {
-                        let debug_str = format!("File {} saved in bucket {bucket_name}", full_path.display());
+                        let debug_str =
+                            format!("File {} saved in bucket {bucket_name}", full_path.display());
                         self.project_logger.log_debug(&debug_str);
                     }
                     Err(e) => {
-                        let error_str =
-                            format!("Unable to save {} in bucket {bucket_name}, {e}", full_path.display());
+                        let error_str = format!(
+                            "Unable to save {} in bucket {bucket_name}, {e}",
+                            full_path.display()
+                        );
                         self.project_logger.log_error(&error_str);
                         panic!("{error_str}")
                     }
                 }
             }
             Err(e) => {
-                let error_str = format!("Unable to convert {} into bytestream. {e}", full_path.display());
+                let error_str = format!(
+                    "Unable to convert {} into bytestream. {e}",
+                    full_path.display()
+                );
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}")
             }
@@ -441,7 +494,10 @@ impl<'a> AWSFileIO<'a> {
                 }
             },
             Err(e) => {
-                let error_str = format!("Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}", folder_path.display());
+                let error_str = format!(
+                    "Unable to get the file {file} from folder {} in bucket {bucket_name}. {e}",
+                    folder_path.display()
+                );
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}");
             }
@@ -478,8 +534,10 @@ impl<'a> AWSFileIO<'a> {
                                 self.project_logger.log_debug(&debug_str);
                             }
                             Err(e) => {
-                                let error_str =
-                                    format!("Unable to upload to file {}. {e}", full_path.display());
+                                let error_str = format!(
+                                    "Unable to upload to file {}. {e}",
+                                    full_path.display()
+                                );
                                 self.project_logger.log_error(&error_str);
                                 panic!("{}", &error_str);
                             }
@@ -506,12 +564,7 @@ impl<'a> AWSFileIO<'a> {
         }
     }
 
-    pub async fn delete_file(
-        &self,
-        bucket_name: &str,
-        folder_path: &Path,
-        file: &str,
-    ) {
+    pub async fn delete_file(&self, bucket_name: &str, folder_path: &Path, file: &str) {
         let full_path = folder_path.join(file);
         match self
             .client
@@ -526,19 +579,14 @@ impl<'a> AWSFileIO<'a> {
                 self.project_logger.log_debug(&debug_str);
             }
             Err(e) => {
-                let error_str =
-                    format!("Unable to delete to file {}. {e}", full_path.display());
+                let error_str = format!("Unable to delete to file {}. {e}", full_path.display());
                 self.project_logger.log_error(&error_str);
                 panic!("{}", &error_str);
             }
         };
     }
 
-    pub async fn delete_folder(
-        &self,
-        bucket_name: &str,
-        folder_path: &Path,
-    ) {
+    pub async fn delete_folder(&self, bucket_name: &str, folder_path: &Path) {
         self.delete_file(bucket_name, folder_path, "").await;
     }
 }
@@ -673,7 +721,7 @@ mod tests {
         let elements = aws_file_io
             .get_elements_in_folder(bucket_name, folder_name)
             .await;
-        println!("{:?}", elements.contents().unwrap());
+        println!("{:?}", elements[elements.len() - 1].contents().unwrap());
     }
 
     #[tokio::test]

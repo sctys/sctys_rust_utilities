@@ -183,11 +183,7 @@ impl<'a> WebScraper<'a> {
     }
 
     fn web_driver_path(&self) -> String {
-        format!(
-            "{}{}",
-            &Self::WEB_DRIVER_PROG,
-            self.web_driver_port
-        )
+        format!("{}{}", &Self::WEB_DRIVER_PROG, self.web_driver_port)
     }
 
     pub fn set_web_driver(&mut self) {
@@ -289,18 +285,21 @@ impl<'a> WebScraper<'a> {
                                 ResponseCheckResult::Ok(response_text) => {
                                     let debug_str = format!("Request {} loaded.", url.as_str());
                                     self.project_logger.log_debug(&debug_str);
-                                    return ResponseCheckResult::Ok(response_text)
-                                },
+                                    return ResponseCheckResult::Ok(response_text);
+                                }
                                 ResponseCheckResult::ErrContinue(e) => {
-                                    let warn_str =
-                                        format!("Checking of the response failed for {}. {e}", url.as_str());
+                                    let warn_str = format!(
+                                        "Checking of the response failed for {}. {e}",
+                                        url.as_str()
+                                    );
                                     self.project_logger.log_warn(&warn_str);
                                     counter += 1
-                                },
+                                }
                                 ResponseCheckResult::ErrTerminate(e) => {
-                                    let warn_str = format!("Terminate to load the page {}. {e}", url.as_str());
+                                    let warn_str =
+                                        format!("Terminate to load the page {}. {e}", url.as_str());
                                     self.project_logger.log_warn(&warn_str);
-                                    return ResponseCheckResult::ErrTerminate(e)
+                                    return ResponseCheckResult::ErrTerminate(e);
                                 }
                             },
                             Err(e) => {
@@ -310,16 +309,23 @@ impl<'a> WebScraper<'a> {
                             }
                         }
                     } else if response.status().is_server_error() {
-                        let warn_str =
-                            format!("Fail in loading the page {}. Server return status code {}", url.as_str(), response.status().as_str());
+                        let warn_str = format!(
+                            "Fail in loading the page {}. Server return status code {}",
+                            url.as_str(),
+                            response.status().as_str()
+                        );
                         self.project_logger.log_warn(&warn_str);
                         counter += 1
                     } else {
-                        let warn_str = format!("Terminate to load the page {}. Server return status code {}", url.as_str(), response.status().as_str());
+                        let warn_str = format!(
+                            "Terminate to load the page {}. Server return status code {}",
+                            url.as_str(),
+                            response.status().as_str()
+                        );
                         self.project_logger.log_warn(&warn_str);
                         counter += 1
                     }
-                },
+                }
                 Err(e) => {
                     let warn_str = format!("Unable to load the page {}. {e}", url.as_str());
                     self.project_logger.log_warn(&warn_str);
@@ -348,19 +354,22 @@ impl<'a> WebScraper<'a> {
                                 ResponseCheckResult::Ok(response_text) => {
                                     let debug_str = format!("Request {} loaded.", url.as_str());
                                     self.project_logger.log_debug(&debug_str);
-                                    return ResponseCheckResult::Ok(response_text)
-                                },
+                                    return ResponseCheckResult::Ok(response_text);
+                                }
                                 ResponseCheckResult::ErrContinue(e) => {
-                                    let warn_str =
-                                        format!("Checking of the response failed for {}. {e}", url.as_str());
+                                    let warn_str = format!(
+                                        "Checking of the response failed for {}. {e}",
+                                        url.as_str()
+                                    );
                                     self.project_logger.log_warn(&warn_str);
                                     counter += 1;
                                     time_operation::sleep(self.retry_sleep);
-                                },
+                                }
                                 ResponseCheckResult::ErrTerminate(e) => {
-                                    let warn_str = format!("Terminate to load the page {}. {e}", url.as_str());
+                                    let warn_str =
+                                        format!("Terminate to load the page {}. {e}", url.as_str());
                                     self.project_logger.log_warn(&warn_str);
-                                    return ResponseCheckResult::ErrTerminate(e)
+                                    return ResponseCheckResult::ErrTerminate(e);
                                 }
                             },
                             Err(e) => {
@@ -370,18 +379,25 @@ impl<'a> WebScraper<'a> {
                             }
                         }
                     } else if response.status().is_server_error() {
-                        let warn_str =
-                            format!("Fail in loading the page {}. Server return status code {}", url.as_str(), response.status().as_str());
+                        let warn_str = format!(
+                            "Fail in loading the page {}. Server return status code {}",
+                            url.as_str(),
+                            response.status().as_str()
+                        );
                         self.project_logger.log_warn(&warn_str);
                         counter += 1;
                         time_operation::sleep(self.retry_sleep);
                     } else {
-                        let warn_str = format!("Terminate to load the page {}. Server return status code {}", url.as_str(), response.status().as_str());
+                        let warn_str = format!(
+                            "Terminate to load the page {}. Server return status code {}",
+                            url.as_str(),
+                            response.status().as_str()
+                        );
                         self.project_logger.log_warn(&warn_str);
                         counter += 1;
                         time_operation::sleep(self.retry_sleep);
                     }
-                },
+                }
                 Err(e) => {
                     let warn_str = format!("Unable to load the page {}. {e}", url.as_str());
                     self.project_logger.log_warn(&warn_str);
@@ -409,7 +425,9 @@ impl<'a> WebScraper<'a> {
     ) -> Vec<UrlFile> {
         let mut fail_list = Vec::new();
         for url_file in tqdm::tqdm(url_file_list.iter()) {
-            if let ResponseCheckResult::Ok(content) = self.retry_request_simple(&url_file.url, check_func) {
+            if let ResponseCheckResult::Ok(content) =
+                self.retry_request_simple(&url_file.url, check_func)
+            {
                 self.save_request_content(folder_path, &url_file.file_name, &content);
             } else {
                 fail_list.push(url_file.clone())
@@ -507,9 +525,7 @@ impl<'a> WebScraper<'a> {
         self.retry_request_simple(&google_sheet_url, Self::null_check_func)
     }
 
-    pub fn convert_google_sheet_string_to_data_frame(
-        google_sheet_csv: &str,
-    ) -> Option<DataFrame> {
+    pub fn convert_google_sheet_string_to_data_frame(google_sheet_csv: &str) -> Option<DataFrame> {
         let cursor = Cursor::new(google_sheet_csv);
         CsvReader::new(cursor).has_header(true).finish().ok()
     }
@@ -568,7 +584,7 @@ impl<'a> WebScraper<'a> {
                             let error_str =
                                 format!("Terminate to load the page {}. {e}", url.as_str());
                             self.project_logger.log_error(&error_str);
-                            return ResponseCheckResult::ErrTerminate(e)
+                            return ResponseCheckResult::ErrTerminate(e);
                         }
                     };
                 }
@@ -718,7 +734,8 @@ mod tests {
         let url = "14Ep-CmoqWxrMU8HshxthRcdRW8IsXvh3n2-ZHVCzqzQ/edit#gid=1855920257";
         let content = web_scraper.retry_download_google_sheet(url);
         let mut data =
-            WebScraper::convert_google_sheet_string_to_data_frame(&content.get_content().unwrap()).unwrap();
+            WebScraper::convert_google_sheet_string_to_data_frame(&content.get_content().unwrap())
+                .unwrap();
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let file = "test_google_sheet.parquet";
         web_scraper
@@ -757,7 +774,7 @@ mod tests {
         let request_setting = RequestSetting {
             calling_func,
             log_only: true,
-            in_s3: false
+            in_s3: false,
         };
         web_scraper.multiple_requests(
             &url_file_list,

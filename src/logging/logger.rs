@@ -39,7 +39,10 @@ impl ProjectLogger {
         let error_logger_file_name = format!("{}.log", &error_logger_name);
         let full_logger_path_file = logger_path.join(standard_logger_file_name);
         let full_error_logger_path_file = logger_path.join(error_logger_file_name);
-        let archive_logger_file_name = full_logger_path_file.to_str().unwrap_or_else(|| panic!("Unable to convert full logger path file to str.")).replace(".log", "_log_{}.gz");
+        let archive_logger_file_name = full_logger_path_file
+            .to_str()
+            .unwrap_or_else(|| panic!("Unable to convert full logger path file to str."))
+            .replace(".log", "_log_{}.gz");
         Self {
             logger_name: logger_name.to_owned(),
             error_logger_name,

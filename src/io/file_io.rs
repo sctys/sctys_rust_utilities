@@ -7,7 +7,7 @@ use polars_io::{SerReader, SerWriter};
 use std::fs;
 use std::fs::{DirEntry, File, ReadDir};
 use std::io::Result;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::SystemTime;
 
 #[derive(Debug)]
@@ -24,12 +24,12 @@ impl<'a> FileIO<'a> {
         folder_path.is_dir()
     }
 
-    pub fn check_file_exist(folder_path: &PathBuf, file: &str) -> bool {
+    pub fn check_file_exist(folder_path: &Path, file: &str) -> bool {
         let full_path_file = Path::new(folder_path).join(file);
         full_path_file.is_file()
     }
 
-    pub fn create_directory_if_not_exists(&self, folder_path: &PathBuf) {
+    pub fn create_directory_if_not_exists(&self, folder_path: &Path) {
         if !folder_path.is_dir() {
             match fs::create_dir_all(folder_path) {
                 Ok(()) => {
@@ -45,7 +45,7 @@ impl<'a> FileIO<'a> {
         }
     }
 
-    fn get_last_modification_time(&self, full_path: &PathBuf) -> SystemTime {
+    fn get_last_modification_time(&self, full_path: &Path) -> SystemTime {
         match fs::metadata(full_path) {
             Ok(m_d) => match m_d.modified() {
                 Ok(m_t) => m_t,
@@ -69,7 +69,7 @@ impl<'a> FileIO<'a> {
         }
     }
 
-    pub fn get_elements_in_folder(&self, folder_path: &PathBuf) -> ReadDir {
+    pub fn get_elements_in_folder(&self, folder_path: &Path) -> ReadDir {
         let elements = match fs::read_dir(folder_path) {
             Ok(r_d) => r_d,
             Err(e) => {
@@ -154,12 +154,7 @@ impl<'a> FileIO<'a> {
         };
     }
 
-    pub async fn async_write_string_to_file(
-        &self,
-        folder_path: &Path,
-        file: &str,
-        content: &str,
-    ) {
+    pub async fn async_write_string_to_file(&self, folder_path: &Path, file: &str, content: &str) {
         let full_path = folder_path.join(file);
         match tokio::fs::write(&full_path, content).await {
             Ok(()) => {

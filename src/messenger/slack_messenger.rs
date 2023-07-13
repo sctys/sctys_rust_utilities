@@ -162,10 +162,6 @@ mod tests {
         let log_channel_id = channel_id.clone();
         let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
         let calling_func = utilities_function::function_name!(true);
-        slack_messenger.retry_send_message(
-            calling_func,
-            "Test message from rust",
-            false,
-        );
+        slack_messenger.retry_send_message(calling_func, "Test message from rust", false);
     }
 }
