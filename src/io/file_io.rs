@@ -1,6 +1,6 @@
 use crate::logger::ProjectLogger;
 use crate::time_operation;
-use chrono::{DateTime, TimeZone};
+use chrono::{DateTime, TimeZone, Utc};
 use polars::frame::DataFrame;
 use polars::prelude::{CsvReader, CsvWriter, ParquetReader, ParquetWriter};
 use polars_io::{SerReader, SerWriter};
@@ -115,6 +115,24 @@ impl<'a> FileIO<'a> {
                 modified_time,
                 cutoff_date_time_late,
             ) < 0)
+    }
+
+    pub fn obtain_folder_between_dates(
+        &self,
+        folder_path: &Path,
+        cutoff_date_time_early: DateTime<Utc>,
+        cutoff_date_time_late: DateTime<Utc>,
+    ) -> impl Iterator<Item = DateTime<Utc>> {
+        let start_time_int = cutoff_date_time_early.format("%Y%m%d").to_string().parse::<i64>().unwrap_or_else(|e| panic!("Unable to parse start time {cutoff_date_time_early} into i64. {e}"));
+        let end_time_int = cutoff_date_time_late.format("%Y%m%d").to_string().parse::<i64>().unwrap_or_else(|e| panic!("Unable to parse end time {cutoff_date_time_late} into i64. {e}"));
+        let elements = self.get_elements_in_folder(folder_path);
+        elements.filter_map(move |dir| {
+            dir.ok().and_then(|element| {
+                element.file_name().to_string_lossy().parse::<i64>().ok().and_then(|folder_date|{
+                    ((folder_date >= start_time_int) && (folder_date < end_time_int)).then_some(time_operation::int_date_to_utc_datetime(folder_date))
+                })
+            })
+        })
     }
 
     pub fn load_file_as_string(&self, folder_path: &Path, file: &str) -> String {

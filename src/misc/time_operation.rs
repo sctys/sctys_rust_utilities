@@ -148,6 +148,13 @@ pub fn naive_date_time_to_utc(naive_date_time: NaiveDateTime) -> DateTime<Utc> {
     DateTime::<Utc>::from_utc(naive_date_time, Utc)
 }
 
+pub fn int_date_to_utc_datetime(date_int: i64) -> DateTime<Utc> {
+    let year = date_int / 10000;
+    let month = (date_int % 10000) / 100;
+    let day = date_int % 100;
+    utc_date_time(year as i32, month as u32, day as u32, 0, 0, 0)
+}
+
 pub fn date_time_to_timestamp<T: TimeZone>(date_time: DateTime<T>, precision: SecPrecision) -> i64 {
     match precision {
         SecPrecision::Sec => date_time.timestamp(),
@@ -253,6 +260,17 @@ mod tests {
             utc_date_time_from_timestamp(timestamp, SecPrecision::Sec),
             utc_datetime
         );
+    }
+
+    #[test]
+    fn test_int_date_to_utc_datetime() {
+        let int_date = 20220121;
+        let (year, month, day, hour, min, sec) = (2022, 1, 21, 0, 0, 0);
+        let utc_datetime = utc_date_time(year, month, day, hour, min, sec);
+        assert_eq!(
+            int_date_to_utc_datetime(int_date),
+            utc_datetime
+        )
     }
 
     #[test]

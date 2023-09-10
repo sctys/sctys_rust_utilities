@@ -1376,7 +1376,7 @@ mod tests {
     }
 
     const WAIT_TIME: Duration = Duration::from_secs(5);
-    const ELEMENT_CSS: &str = "body"; //"div#matchList.matchList";
+    const ELEMENT_CSS: &str = "div#matchList.matchList";
 
     async fn extra_action(web_driver: &mut WebDriver) -> WebDriverResult<()> {
         web_driver.set_implicit_wait_timeout(WAIT_TIME).await?;
