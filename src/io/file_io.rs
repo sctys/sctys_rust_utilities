@@ -123,14 +123,32 @@ impl<'a> FileIO<'a> {
         cutoff_date_time_early: DateTime<Utc>,
         cutoff_date_time_late: DateTime<Utc>,
     ) -> impl Iterator<Item = DateTime<Utc>> {
-        let start_time_int = cutoff_date_time_early.format("%Y%m%d").to_string().parse::<i64>().unwrap_or_else(|e| panic!("Unable to parse start time {cutoff_date_time_early} into i64. {e}"));
-        let end_time_int = cutoff_date_time_late.format("%Y%m%d").to_string().parse::<i64>().unwrap_or_else(|e| panic!("Unable to parse end time {cutoff_date_time_late} into i64. {e}"));
+        let start_time_int = cutoff_date_time_early
+            .format("%Y%m%d")
+            .to_string()
+            .parse::<i64>()
+            .unwrap_or_else(|e| {
+                panic!("Unable to parse start time {cutoff_date_time_early} into i64. {e}")
+            });
+        let end_time_int = cutoff_date_time_late
+            .format("%Y%m%d")
+            .to_string()
+            .parse::<i64>()
+            .unwrap_or_else(|e| {
+                panic!("Unable to parse end time {cutoff_date_time_late} into i64. {e}")
+            });
         let elements = self.get_elements_in_folder(folder_path);
         elements.filter_map(move |dir| {
             dir.ok().and_then(|element| {
-                element.file_name().to_string_lossy().parse::<i64>().ok().and_then(|folder_date|{
-                    ((folder_date >= start_time_int) && (folder_date < end_time_int)).then_some(time_operation::int_date_to_utc_datetime(folder_date))
-                })
+                element
+                    .file_name()
+                    .to_string_lossy()
+                    .parse::<i64>()
+                    .ok()
+                    .and_then(|folder_date| {
+                        ((folder_date >= start_time_int) && (folder_date < end_time_int))
+                            .then_some(time_operation::int_date_to_utc_datetime(folder_date))
+                    })
             })
         })
     }

@@ -267,10 +267,7 @@ mod tests {
         let int_date = 20220121;
         let (year, month, day, hour, min, sec) = (2022, 1, 21, 0, 0, 0);
         let utc_datetime = utc_date_time(year, month, day, hour, min, sec);
-        assert_eq!(
-            int_date_to_utc_datetime(int_date),
-            utc_datetime
-        )
+        assert_eq!(int_date_to_utc_datetime(int_date), utc_datetime)
     }
 
     #[test]
