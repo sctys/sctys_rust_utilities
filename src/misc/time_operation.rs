@@ -144,8 +144,8 @@ pub fn utc_date_time(
     }
 }
 
-pub fn naive_date_time_to_utc(naive_date_time: NaiveDateTime) -> DateTime<Utc> {
-    DateTime::<Utc>::from_utc(naive_date_time, Utc)
+pub fn naive_date_time_to_utc(naive_date_time: &NaiveDateTime) -> DateTime<Utc> {
+   Utc.from_utc_datetime(naive_date_time)
 }
 
 pub fn int_date_to_utc_datetime(date_int: i64) -> DateTime<Utc> {
@@ -172,7 +172,7 @@ pub fn utc_date_time_from_timestamp(timestamp: i64, precision: SecPrecision) -> 
         SecPrecision::NanoSec => (timestamp / ONE_E9, (timestamp % ONE_E9) as u32),
     };
     match NaiveDateTime::from_timestamp_opt(secs, nsecs) {
-        Some(dt) => naive_date_time_to_utc(dt),
+        Some(dt) => naive_date_time_to_utc(&dt),
         None => panic!("Invalid timestamp {timestamp}"),
     }
 }
@@ -185,11 +185,11 @@ fn fixed_offset_from_hour(hour: i32) -> FixedOffset {
 }
 
 pub fn naive_date_time_to_fixed_offset(
-    naive_date_time: NaiveDateTime,
+    naive_date_time: &NaiveDateTime,
     hour: i32,
 ) -> DateTime<FixedOffset> {
     let offset = fixed_offset_from_hour(hour);
-    DateTime::<FixedOffset>::from_local(naive_date_time, offset)
+    offset.from_local_datetime(naive_date_time).unwrap()
 }
 
 pub fn utc_date_time_to_fixed_offset(date_time: DateTime<Utc>, hour: i32) -> DateTime<FixedOffset> {
@@ -248,7 +248,7 @@ mod tests {
         let (year, month, day, hour, min, sec) = (2021, 10, 15, 18, 36, 44);
         let naive_datetime = naive_date_time(year, month, day, hour, min, sec);
         let utc_datetime = utc_date_time(year, month, day, hour, min, sec);
-        assert_eq!(naive_date_time_to_utc(naive_datetime), utc_datetime);
+        assert_eq!(naive_date_time_to_utc(&naive_datetime), utc_datetime);
     }
 
     #[test]
@@ -275,7 +275,7 @@ mod tests {
         let (year, month, day, hour, min, sec) = (2021, 10, 15, 18, 36, 44);
         let offset_hour = 8;
         let naive_datetime = naive_date_time(year, month, day, hour, min, sec);
-        let local_datetime = naive_date_time_to_fixed_offset(naive_datetime, offset_hour);
+        let local_datetime = naive_date_time_to_fixed_offset(&naive_datetime, offset_hour);
         let utc_datetime = utc_date_time(year, month, day, hour - offset_hour as u32, min, sec);
         assert_eq!(timezone_to_utc_date_time(local_datetime), utc_datetime);
     }

@@ -70,7 +70,7 @@ impl<'a> FileIO<'a> {
     }
 
     pub fn get_elements_in_folder(&self, folder_path: &Path) -> ReadDir {
-        let elements = match fs::read_dir(folder_path) {
+        match fs::read_dir(folder_path) {
             Ok(r_d) => r_d,
             Err(e) => {
                 let error_str = format!(
@@ -80,8 +80,7 @@ impl<'a> FileIO<'a> {
                 self.project_logger.log_error(&error_str);
                 panic!("{}", &error_str)
             }
-        };
-        elements
+        }
     }
 
     pub fn filter_element_after<T: TimeZone>(
