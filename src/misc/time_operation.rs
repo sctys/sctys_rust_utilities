@@ -145,7 +145,7 @@ pub fn utc_date_time(
 }
 
 pub fn naive_date_time_to_utc(naive_date_time: &NaiveDateTime) -> DateTime<Utc> {
-   Utc.from_utc_datetime(naive_date_time)
+    Utc.from_utc_datetime(naive_date_time)
 }
 
 pub fn int_date_to_utc_datetime(date_int: i64) -> DateTime<Utc> {

@@ -1,7 +1,7 @@
 use crate::logger::ProjectLogger;
 use crate::time_operation;
 use crate::time_operation::SecPrecision;
-use aws_sdk_s3::model::Object;
+use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart, Object};
 use aws_sdk_s3::output::ListObjectsV2Output;
 use aws_sdk_s3::types::ByteStream;
 use aws_sdk_s3::{Client, Credentials, Region};
@@ -13,11 +13,14 @@ use polars_io::{SerReader, SerWriter};
 use serde::Deserialize;
 use std::env;
 use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, SeekFrom};
 use std::path::{Path, PathBuf};
 use tokio::fs::File;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use toml;
+
+const MULTIPART_SIZE: usize = 1024 * 1024 * 1024; // 1GB per part
+const LIMIT_SINGLE_UPLOAD: usize = 5 * MULTIPART_SIZE;
 
 #[derive(Debug, Clone)]
 pub struct AWSFileIO<'a> {
@@ -513,46 +516,38 @@ impl<'a> AWSFileIO<'a> {
         local_file: &str,
     ) {
         let full_local_path = local_path.join(local_file);
+        let full_path = folder_path.join(file);
         match File::open(&full_local_path).await {
-            Ok(mut temp_file) => {
-                let mut bytes = Vec::new();
-                match temp_file.read_to_end(&mut bytes).await {
-                    Ok(_) => {
-                        let content = ByteStream::from(bytes);
-                        let full_path = folder_path.join(file);
-                        match self
-                            .client
-                            .put_object()
-                            .bucket(bucket_name)
-                            .key(full_path.to_string_lossy())
-                            .body(content)
-                            .send()
-                            .await
-                        {
-                            Ok(_) => {
-                                let debug_str = format!("File {} uploaded.", full_path.display());
-                                self.project_logger.log_debug(&debug_str);
-                            }
-                            Err(e) => {
-                                let error_str = format!(
-                                    "Unable to upload to file {}. {e}",
-                                    full_path.display()
-                                );
-                                self.project_logger.log_error(&error_str);
-                                panic!("{}", &error_str);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let error_str = format!(
-                            "Unable to red the local file {} as bytes. {e}",
-                            &full_local_path.display()
-                        );
-                        self.project_logger.log_error(&error_str);
-                        panic!("{error_str}");
+            Ok(mut temp_file) => match temp_file.metadata().await {
+                Ok(metadata) => {
+                    if metadata.len() >= LIMIT_SINGLE_UPLOAD as u64 {
+                        self.upload_multipart(
+                            &mut temp_file,
+                            metadata.len() as usize,
+                            bucket_name,
+                            &full_path,
+                            &full_local_path,
+                        )
+                        .await
+                    } else {
+                        self.upload_single_object(
+                            &mut temp_file,
+                            bucket_name,
+                            &full_path,
+                            &full_local_path,
+                        )
+                        .await
                     }
                 }
-            }
+                Err(e) => {
+                    let error_str = format!(
+                        "Unable to get the metadata for file {}. {e}",
+                        &full_local_path.display()
+                    );
+                    self.project_logger.log_error(&error_str);
+                    panic!("{error_str}");
+                }
+            },
             Err(e) => {
                 let error_str = format!(
                     "Unable to open the local file {}. {e}",
@@ -560,6 +555,186 @@ impl<'a> AWSFileIO<'a> {
                 );
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}");
+            }
+        }
+    }
+
+    async fn upload_single_object(
+        &self,
+        temp_file: &mut File,
+        bucket_name: &str,
+        full_path: &Path,
+        full_local_path: &Path,
+    ) {
+        let mut bytes = Vec::new();
+        match temp_file.read_to_end(&mut bytes).await {
+            Ok(_) => {
+                let content = ByteStream::from(bytes);
+                match self
+                    .client
+                    .put_object()
+                    .bucket(bucket_name)
+                    .key(full_path.to_string_lossy())
+                    .body(content)
+                    .send()
+                    .await
+                {
+                    Ok(_) => {
+                        let debug_str = format!("File {} uploaded.", full_path.display());
+                        self.project_logger.log_debug(&debug_str);
+                    }
+                    Err(e) => {
+                        let error_str =
+                            format!("Unable to upload to file {}. {e}", full_path.display());
+                        self.project_logger.log_error(&error_str);
+                        panic!("{}", &error_str);
+                    }
+                }
+            }
+            Err(e) => {
+                let error_str = format!(
+                    "Unable to read the local file {} as bytes. {e}",
+                    &full_local_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                panic!("{error_str}");
+            }
+        }
+    }
+
+    async fn upload_multipart(
+        &self,
+        temp_file: &mut File,
+        file_size: usize,
+        bucket_name: &str,
+        full_path: &Path,
+        full_local_path: &Path,
+    ) {
+        let upload_id = match self
+            .client
+            .create_multipart_upload()
+            .bucket(bucket_name)
+            .key(full_path.to_string_lossy())
+            .send()
+            .await
+        {
+            Ok(response) => match response.upload_id() {
+                Some(upload_id) => upload_id.to_string(),
+                None => {
+                    let error_str = "No upload ID is generated from the multipart upload.";
+                    self.project_logger.log_error(error_str);
+                    panic!("{error_str}")
+                }
+            },
+            Err(e) => {
+                let error_str = format!("Unable to create the multipart upload. {e}");
+                self.project_logger.log_error(&error_str);
+                panic!("{error_str}")
+            }
+        };
+
+        let mut part_number = 1;
+        let mut offset: u64 = 0;
+        let mut completed_parts = CompletedMultipartUpload::builder();
+
+        while offset < file_size as u64 {
+            let mut part_data = vec![0; MULTIPART_SIZE];
+            match temp_file.seek(SeekFrom::Start(offset)).await {
+                Ok(_) => {
+                    let bytes_to_read = if (file_size - offset as usize) < MULTIPART_SIZE {
+                        temp_file.read_to_end(&mut part_data).await
+                    } else {
+                        temp_file.read_exact(&mut part_data).await
+                    };
+                    match bytes_to_read {
+                        Ok(bytes_read) => {
+                            if bytes_read == 0 {
+                                break;
+                            }
+                            let content = ByteStream::from(part_data);
+                            match self
+                                .client
+                                .upload_part()
+                                .bucket(bucket_name)
+                                .key(full_path.to_string_lossy())
+                                .part_number(part_number)
+                                .upload_id(&upload_id)
+                                .body(content)
+                                .send()
+                                .await
+                            {
+                                Ok(uploaded_part) => {
+                                    let e_tag = uploaded_part.e_tag().unwrap_or_else(|| {
+                                        panic!(
+                                            "Unable to find e-tag for file {} part {part_number}",
+                                            full_path.display()
+                                        )
+                                    });
+                                    let completed_part = CompletedPart::builder()
+                                        .part_number(part_number)
+                                        .e_tag(e_tag)
+                                        .build();
+                                    completed_parts = completed_parts.parts(completed_part);
+                                    let debug_str = format!(
+                                        "File {} part {part_number} uploaded.",
+                                        full_path.display()
+                                    );
+                                    self.project_logger.log_debug(&debug_str);
+                                }
+                                Err(e) => {
+                                    let error_str = format!(
+                                        "Unable to upload the file {} part {part_number}. {e}",
+                                        full_path.display()
+                                    );
+                                    self.project_logger.log_error(&error_str);
+                                    panic!("{error_str}")
+                                }
+                            };
+                            offset += bytes_read as u64;
+                            part_number += 1;
+                        }
+                        Err(e) => {
+                            let error_str = format!(
+                                "Unable to read the local file {} part {part_number} as bytes. {e}",
+                                &full_local_path.display()
+                            );
+                            self.project_logger.log_error(&error_str);
+                            panic!("{error_str}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    let error_str = format!(
+                        "Unable to seek position for file {}. {e}",
+                        full_local_path.display()
+                    );
+                    self.project_logger.log_error(&error_str);
+                    panic!("{error_str}");
+                }
+            };
+        }
+
+        match self
+            .client
+            .complete_multipart_upload()
+            .bucket(bucket_name)
+            .key(full_path.to_string_lossy())
+            .upload_id(upload_id)
+            .multipart_upload(completed_parts.build())
+            .send()
+            .await
+        {
+            Ok(_) => {
+                let debug_str = format!("File {} multipart uploaded.", full_path.display());
+                self.project_logger.log_debug(&debug_str);
+            }
+            Err(e) => {
+                let error_str = format!(
+                    "Unable to upload to file {} multipart. {e}",
+                    full_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                panic!("{}", &error_str);
             }
         }
     }
