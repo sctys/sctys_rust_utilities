@@ -1,7 +1,7 @@
 use futures::future;
 use itertools::Itertools;
+use polars::io::SerReader;
 use polars::prelude::{CsvReader, DataFrame};
-use polars_io::SerReader;
 use reqwest::{Client, Proxy, RequestBuilder, Url};
 use sctys_proxy::{PrivateProxy, PrivateVpn, ScraperProxy};
 use std::future::Future;
@@ -17,7 +17,7 @@ use crate::aws_s3::AWSFileIO;
 use crate::file_io::FileIO;
 use crate::logger::ProjectLogger;
 use crate::slack_messenger::SlackMessenger;
-use crate::time_operation;
+use crate::{function_name, time_operation};
 
 #[derive(Debug)]
 pub struct AsyncWebScraper<'a> {
@@ -368,10 +368,30 @@ impl<'a> AsyncWebScraper<'a> {
             self.aws_file_io
                 .write_string_to_file(self.aws_bucket, folder_path, file, content)
                 .await
+                .unwrap_or_else(|e| {
+                    let function_name = function_name!(true);
+                    let error_msg = format!(
+                        "Unable to save file {file} in {}. {e}",
+                        folder_path.display()
+                    );
+                    self.slack_messenger
+                        .retry_send_message(function_name, &error_msg, true);
+                    panic!("{error_msg}")
+                })
         } else {
             self.file_io
                 .async_write_string_to_file(folder_path, file, content)
-                .await;
+                .await
+                .unwrap_or_else(|e| {
+                    let function_name = function_name!(true);
+                    let error_msg = format!(
+                        "Unable to save file {file} in {}. {e}",
+                        folder_path.display()
+                    );
+                    self.slack_messenger
+                        .retry_send_message(function_name, &error_msg, true);
+                    panic!("{error_msg}")
+                })
         }
     }
 
@@ -1372,7 +1392,8 @@ mod tests {
         let file = "test_google_sheet.parquet";
         web_scraper
             .file_io
-            .write_parquet_file(&folder_path, file, &mut data);
+            .write_parquet_file(&folder_path, file, &mut data)
+            .unwrap();
     }
 
     const WAIT_TIME: Duration = Duration::from_secs(5);

@@ -2,11 +2,12 @@ use crate::logger::ProjectLogger;
 use crate::time_operation;
 use chrono::{DateTime, TimeZone, Utc};
 use polars::frame::DataFrame;
-use polars::prelude::{CsvReader, CsvWriter, ParquetReader, ParquetWriter};
-use polars_io::{SerReader, SerWriter};
-use std::fs;
-use std::fs::{DirEntry, File, ReadDir};
-use std::io::Result;
+use polars::io::{SerReader, SerWriter};
+use polars::lazy::frame::{LazyCsvReader, LazyFrame, ScanArgsParquet};
+use polars::prelude::*;
+use std::fs::{self, DirEntry};
+use std::fs::{File, ReadDir};
+use std::io::{Error, ErrorKind, Result};
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -29,58 +30,75 @@ impl<'a> FileIO<'a> {
         full_path_file.is_file()
     }
 
-    pub fn create_directory_if_not_exists(&self, folder_path: &Path) {
+    pub fn create_directory_if_not_exists(&self, folder_path: &Path) -> Result<()> {
         if !folder_path.is_dir() {
-            match fs::create_dir_all(folder_path) {
-                Ok(()) => {
-                    let debug_str = format!("Folder {} created", folder_path.display());
-                    self.project_logger.log_debug(&debug_str);
-                }
-                Err(e) => {
+            fs::create_dir_all(folder_path).map_or_else(
+                |e| {
                     let error_str =
                         format!("Unable to create folder {}. {e}", folder_path.display());
                     self.project_logger.log_error(&error_str);
-                }
-            }
+                    Err(e)
+                },
+                |()| {
+                    let debug_str = format!("Folder {} created", folder_path.display());
+                    self.project_logger.log_debug(&debug_str);
+                    Ok(())
+                },
+            )
+        } else {
+            let error_str = format!("Folder {} already exist.", folder_path.display());
+            Err(Error::new(ErrorKind::AlreadyExists, error_str))
         }
     }
 
-    fn get_last_modification_time(&self, full_path: &Path) -> SystemTime {
-        match fs::metadata(full_path) {
-            Ok(m_d) => match m_d.modified() {
-                Ok(m_t) => m_t,
-                Err(e) => {
-                    let error_str = format!(
-                        "Unable to get the last modification time for {}, {e}",
-                        full_path.display()
-                    );
-                    self.project_logger.log_error(&error_str);
-                    panic!("{}", &error_str);
-                }
+    pub fn remove_file(&self, folder_path: &Path, file: &str) -> Result<()> {
+        let full_path_file = Path::new(folder_path).join(file);
+        fs::remove_file(&full_path_file).map_or_else(
+            |e| {
+                let error_str = format!("Unable to remove file {}. {e}", full_path_file.display());
+                self.project_logger.log_error(&error_str);
+                Err(e)
             },
-            Err(e) => {
+            |()| {
+                let debug_str = format!("File {} removed", full_path_file.display());
+                self.project_logger.log_debug(&debug_str);
+                Ok(())
+            },
+        )
+    }
+
+    fn get_last_modification_time(&self, full_path: &Path) -> Result<SystemTime> {
+        fs::metadata(full_path).map_or_else(
+            |e| {
                 let error_str = format!(
                     "Unable to get the last modification time for {}, {e}",
                     full_path.display()
                 );
                 self.project_logger.log_error(&error_str);
-                panic!("{error_str}");
-            }
-        }
+                Err(e)
+            },
+            |metadata| {
+                metadata.modified().map_err(|e| {
+                    let error_str = format!(
+                        "Unable to get the last modification time for {}, {e}",
+                        full_path.display()
+                    );
+                    self.project_logger.log_error(&error_str);
+                    e
+                })
+            },
+        )
     }
 
-    pub fn get_elements_in_folder(&self, folder_path: &Path) -> ReadDir {
-        match fs::read_dir(folder_path) {
-            Ok(r_d) => r_d,
-            Err(e) => {
-                let error_str = format!(
-                    "Unable to get the elements in folder {}, {e}",
-                    folder_path.display()
-                );
-                self.project_logger.log_error(&error_str);
-                panic!("{}", &error_str)
-            }
-        }
+    pub fn get_elements_in_folder(&self, folder_path: &Path) -> Result<ReadDir> {
+        fs::read_dir(folder_path).map_err(|e| {
+            let error_str = format!(
+                "Unable to get the elements in folder {}, {e}",
+                folder_path.display()
+            );
+            self.project_logger.log_error(&error_str);
+            e
+        })
     }
 
     pub fn filter_element_after<T: TimeZone>(
@@ -93,8 +111,10 @@ impl<'a> FileIO<'a> {
             Err(e) => panic!("Unable to identify the element. {e}"),
         };
         let full_path = dir_entry.path();
-        let modified_time = self.get_last_modification_time(&full_path);
-        time_operation::diff_system_time_date_time_sec(modified_time, cutoff_date_time) > 0
+        self.get_last_modification_time(&full_path)
+            .map_or(false, |modified_time| {
+                time_operation::diff_system_time_date_time_sec(modified_time, cutoff_date_time) > 0
+            })
     }
 
     pub fn filter_element_between<T: TimeZone>(
@@ -108,12 +128,17 @@ impl<'a> FileIO<'a> {
             Err(e) => panic!("Unable to identify the element. {e}"),
         };
         let full_path = dir_entry.path();
-        let modified_time = self.get_last_modification_time(&full_path);
-        (time_operation::diff_system_time_date_time_sec(modified_time, cutoff_date_time_early) >= 0)
-            && (time_operation::diff_system_time_date_time_sec(
-                modified_time,
-                cutoff_date_time_late,
-            ) < 0)
+        self.get_last_modification_time(&full_path)
+            .map_or(false, |modified_time| {
+                (time_operation::diff_system_time_date_time_sec(
+                    modified_time,
+                    cutoff_date_time_early,
+                ) >= 0)
+                    && (time_operation::diff_system_time_date_time_sec(
+                        modified_time,
+                        cutoff_date_time_late,
+                    ) < 0)
+            })
     }
 
     pub fn obtain_folder_between_dates(
@@ -121,7 +146,7 @@ impl<'a> FileIO<'a> {
         folder_path: &Path,
         cutoff_date_time_early: DateTime<Utc>,
         cutoff_date_time_late: DateTime<Utc>,
-    ) -> impl Iterator<Item = DateTime<Utc>> {
+    ) -> Result<impl Iterator<Item = DateTime<Utc>>> {
         let start_time_int = cutoff_date_time_early
             .format("%Y%m%d")
             .to_string()
@@ -136,8 +161,8 @@ impl<'a> FileIO<'a> {
             .unwrap_or_else(|e| {
                 panic!("Unable to parse end time {cutoff_date_time_late} into i64. {e}")
             });
-        let elements = self.get_elements_in_folder(folder_path);
-        elements.filter_map(move |dir| {
+        let elements = self.get_elements_in_folder(folder_path)?;
+        Ok(elements.filter_map(move |dir| {
             dir.ok().and_then(|element| {
                 element
                     .file_name()
@@ -149,168 +174,237 @@ impl<'a> FileIO<'a> {
                             .then_some(time_operation::int_date_to_utc_datetime(folder_date))
                     })
             })
-        })
+        }))
     }
 
-    pub fn load_file_as_string(&self, folder_path: &Path, file: &str) -> String {
+    pub fn load_file_as_string(&self, folder_path: &Path, file: &str) -> Result<String> {
         let full_path = folder_path.join(file);
-        match fs::read_to_string(&full_path) {
-            Ok(s) => {
-                let debug_str = format!("File {} loaded.", &full_path.display());
-                self.project_logger.log_debug(&debug_str);
-                s
-            }
-            Err(e) => {
+        fs::read_to_string(&full_path).map_or_else(
+            |e| {
                 let error_str = format!(
                     "Unable to load file {} as string. {e}",
                     &full_path.display()
                 );
                 self.project_logger.log_error(&error_str);
-                panic!("{}", &error_str)
-            }
-        }
+                Err(e)
+            },
+            |string| {
+                let debug_str = format!("File {} loaded.", &full_path.display());
+                self.project_logger.log_debug(&debug_str);
+                Ok(string)
+            },
+        )
     }
 
-    pub fn write_string_to_file(&self, folder_path: &Path, file: &str, content: &str) {
+    pub fn write_string_to_file(
+        &self,
+        folder_path: &Path,
+        file: &str,
+        content: &str,
+    ) -> Result<()> {
         let full_path = folder_path.join(file);
-        match fs::write(&full_path, content) {
-            Ok(()) => {
-                let debug_str = format!("File {} saved.", &full_path.display());
-                self.project_logger.log_debug(&debug_str);
-            }
-            Err(e) => {
+        fs::write(&full_path, content).map_or_else(
+            |e| {
                 let error_str = format!(
                     "Unable to save string to file {}. {e}",
                     &full_path.display()
                 );
                 self.project_logger.log_error(&error_str);
-                panic!("{}", &error_str);
-            }
-        };
-    }
-
-    pub async fn async_write_string_to_file(&self, folder_path: &Path, file: &str, content: &str) {
-        let full_path = folder_path.join(file);
-        match tokio::fs::write(&full_path, content).await {
-            Ok(()) => {
+                Err(e)
+            },
+            |()| {
                 let debug_str = format!("File {} saved.", &full_path.display());
                 self.project_logger.log_debug(&debug_str);
-            }
-            Err(e) => {
+                Ok(())
+            },
+        )
+    }
+
+    pub async fn async_write_string_to_file(
+        &self,
+        folder_path: &Path,
+        file: &str,
+        content: &str,
+    ) -> Result<()> {
+        let full_path = folder_path.join(file);
+        tokio::fs::write(&full_path, content).await.map_or_else(
+            |e| {
                 let error_str = format!(
                     "Unable to save string to file {}. {e}",
                     &full_path.display()
                 );
                 self.project_logger.log_error(&error_str);
-                panic!("{}", &error_str);
-            }
-        };
+                Err(e)
+            },
+            |()| {
+                let debug_str = format!("File {} saved.", &full_path.display());
+                self.project_logger.log_debug(&debug_str);
+                Ok(())
+            },
+        )
     }
 
     // allow for more complicated loading options from the reader
-    pub fn get_csv_reader(&self, folder_path: &Path, file: &str) -> CsvReader<File> {
+    pub fn get_csv_reader(&self, folder_path: &Path, file: &str) -> PolarsResult<CsvReader<File>> {
         let full_path = folder_path.join(file);
-        match CsvReader::from_path(&full_path) {
-            Ok(c_r) => {
-                let debug_str = format!("File {} loaded.", &full_path.display());
-                self.project_logger.log_debug(&debug_str);
-                c_r
-            }
-            Err(e) => {
+        CsvReader::from_path(&full_path).map_or_else(
+            |e| {
                 let error_str = format!("Unable to load file {} as csv. {e}", &full_path.display());
                 self.project_logger.log_error(&error_str);
-                panic!("{}", &error_str)
-            }
-        }
+                Err(e)
+            },
+            |csv_reader| {
+                let debug_str = format!("File {} loaded.", &full_path.display());
+                self.project_logger.log_debug(&debug_str);
+                Ok(csv_reader)
+            },
+        )
     }
 
     // directly loading the csv file with default options
-    pub fn load_csv_file(&self, folder_path: &Path, file: &str) -> DataFrame {
-        let csv_reader = self.get_csv_reader(folder_path, file);
-        match csv_reader.has_header(true).finish() {
-            Ok(df) => df,
-            Err(e) => panic!(
+    pub fn load_csv_file(&self, folder_path: &Path, file: &str) -> PolarsResult<DataFrame> {
+        let csv_reader = self.get_csv_reader(folder_path, file)?;
+        csv_reader.has_header(true).finish().map_err(|e| {
+            let error_str = format!(
                 "Unable to convert csv file {}/{file} into data frame. {e}",
                 folder_path.display()
-            ),
-        }
+            );
+            self.project_logger.log_error(&error_str);
+            e
+        })
     }
 
     // allow for more complicated writing options for the writer
-    pub fn get_file_writer(&self, folder_path: &Path, file: &str) -> File {
+    pub fn get_file_writer(&self, folder_path: &Path, file: &str) -> Result<File> {
         let full_path = folder_path.join(file);
-        match File::create(&full_path) {
-            Ok(c_f) => {
-                let debug_str = format!("File {} created.", &full_path.display());
-                self.project_logger.log_debug(&debug_str);
-                c_f
-            }
-            Err(e) => {
+        File::create(&full_path).map_or_else(
+            |e| {
                 let error_str = format!("Unable to create file {}. {}", &full_path.display(), e);
                 self.project_logger.log_error(&error_str);
-                panic!("{}", &error_str)
-            }
-        }
+                Err(e)
+            },
+            |file_writer| {
+                let debug_str = format!("File {} created.", &full_path.display());
+                self.project_logger.log_debug(&debug_str);
+                Ok(file_writer)
+            },
+        )
     }
 
     // directly writing the csv file with default options
-    pub fn write_csv_file(&self, folder_path: &Path, file: &str, data: &mut DataFrame) {
-        let csv_writer = CsvWriter::new(self.get_file_writer(folder_path, file));
-        if let Err(e) = csv_writer
+    pub fn write_csv_file(
+        &self,
+        folder_path: &Path,
+        file: &str,
+        data: &mut DataFrame,
+    ) -> PolarsResult<()> {
+        let csv_writer = CsvWriter::new(self.get_file_writer(folder_path, file)?);
+        csv_writer
             .has_header(true)
             .with_delimiter(b',')
             .finish(data)
-        {
-            let error_str = format!(
-                "Unable to write csv file {}/{file}. {e}",
-                folder_path.display()
-            );
-            self.project_logger.log_error(&error_str);
-            panic!("{}", &error_str)
-        }
+            .map_err(|e| {
+                let error_str = format!(
+                    "Unable to write csv file {}/{file}. {e}",
+                    folder_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                e
+            })
+    }
+
+    pub fn scan_csv_file(&self, folder_path: &Path, file: &str) -> PolarsResult<LazyFrame> {
+        let full_path = folder_path.join(file);
+        LazyCsvReader::new(&full_path).finish().map_or_else(
+            |e| {
+                let error_str = format!(
+                    "Unable to scan csv file {}/{file}. {e}",
+                    folder_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                Err(e)
+            },
+            |lazy_frame| {
+                let debug_str = format!("File {} scanned.", &full_path.display());
+                self.project_logger.log_debug(&debug_str);
+                Ok(lazy_frame)
+            },
+        )
     }
 
     // allow for more complicated loading options from the reader
-    pub fn get_parquet_reader(&self, folder_path: &Path, file: &str) -> ParquetReader<File> {
+    pub fn get_parquet_reader(
+        &self,
+        folder_path: &Path,
+        file: &str,
+    ) -> Result<ParquetReader<File>> {
         let full_path = folder_path.join(file);
-        let file_reader = match File::open(&full_path) {
-            Ok(p_f) => {
-                let debug_str = format!("File {} loaded.", &full_path.display());
-                self.project_logger.log_debug(&debug_str);
-                p_f
-            }
-            Err(e) => {
+        File::open(&full_path).map_or_else(
+            |e| {
                 let error_str = format!("Unable to load file {}. {e}", &full_path.display());
                 self.project_logger.log_error(&error_str);
-                panic!("{}", &error_str)
-            }
-        };
-        ParquetReader::new(file_reader)
+                Err(e)
+            },
+            |parquet_reader| {
+                let debug_str = format!("File {} loaded.", &full_path.display());
+                self.project_logger.log_debug(&debug_str);
+                Ok(ParquetReader::new(parquet_reader))
+            },
+        )
     }
 
     // directly reading the parquet file with default options
-    pub fn load_parquet_file(&self, folder_path: &Path, file: &str) -> DataFrame {
-        let parquet_reader: ParquetReader<File> = self.get_parquet_reader(folder_path, file);
-        match parquet_reader.finish() {
-            Ok(df) => df,
-            Err(e) => panic!(
-                "Unable to convert parquet file {}/{file} into data frame. {e}",
-                folder_path.display()
-            ),
-        }
-    }
-
-    // directly writing the parquet file with default options
-    pub fn write_parquet_file(&self, folder_path: &Path, file: &str, data: &mut DataFrame) {
-        let parquet_writer = ParquetWriter::new(self.get_file_writer(folder_path, file));
-        if let Err(e) = parquet_writer.finish(data) {
+    pub fn load_parquet_file(&self, folder_path: &Path, file: &str) -> PolarsResult<DataFrame> {
+        let parquet_reader: ParquetReader<File> = self.get_parquet_reader(folder_path, file)?;
+        parquet_reader.finish().map_err(|e| {
             let error_str = format!(
-                "Unable to write parquet file {}/{file}. {e}",
+                "Unable to convert parquet file {}/{file} into data frame. {e}",
                 folder_path.display()
             );
             self.project_logger.log_error(&error_str);
-            panic!("{}", &error_str)
-        }
+            e
+        })
+    }
+
+    // directly writing the parquet file with default options
+    pub fn write_parquet_file(
+        &self,
+        folder_path: &Path,
+        file: &str,
+        data: &mut DataFrame,
+    ) -> PolarsResult<()> {
+        let parquet_writer = ParquetWriter::new(self.get_file_writer(folder_path, file)?);
+        parquet_writer.finish(data).map_or_else(
+            |e| {
+                let error_str = format!(
+                    "Unable to write parquet file {}/{file}. {e}",
+                    folder_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                Err(e)
+            },
+            |_| Ok(()),
+        )
+    }
+
+    pub fn scan_parquet_file(&self, folder_path: &Path, file: &str) -> PolarsResult<LazyFrame> {
+        let full_path = folder_path.join(file);
+        let args = ScanArgsParquet::default();
+        LazyFrame::scan_parquet(&full_path, args).map_or_else(
+            |e| {
+                let error_str = format!(
+                    "Unable to scan parquet file {}/file into lazy frame. {e}.",
+                    folder_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                Err(e)
+            },
+            |lazy_frame| {
+                let debug_str = format!("File {} scanned.", &full_path.display());
+                self.project_logger.log_debug(&debug_str);
+                Ok(lazy_frame)
+            },
+        )
     }
 }
 
@@ -349,7 +443,9 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
-        file_io.create_directory_if_not_exists(&folder_path);
+        file_io
+            .create_directory_if_not_exists(&folder_path)
+            .unwrap();
         assert!(FileIO::check_folder_exist(&folder_path));
         fs::remove_dir(&folder_path).unwrap();
         assert!(!FileIO::check_folder_exist(&folder_path));
@@ -367,7 +463,7 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
-        let elements = file_io.get_elements_in_folder(&folder_path);
+        let elements = file_io.get_elements_in_folder(&folder_path).unwrap();
         let cutoff_date_time = time_operation::utc_date_time(2023, 1, 1, 0, 0, 0);
         let file_list = elements.filter(|x| file_io.filter_element_after(x, cutoff_date_time));
         assert_eq!(file_list.count(), 1);
@@ -385,7 +481,7 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
-        let elements = file_io.get_elements_in_folder(&folder_path);
+        let elements = file_io.get_elements_in_folder(&folder_path).unwrap();
         let cutoff_date_time_early = time_operation::utc_date_time(2021, 10, 1, 0, 0, 0);
         let cutoff_date_time_late = time_operation::utc_date_time(2021, 10, 31, 0, 0, 0);
         let file_list = elements.filter(|x| {
@@ -405,9 +501,11 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
-        let html_content = file_io.load_file_as_string(&folder_path, file);
+        let html_content = file_io.load_file_as_string(&folder_path, file).unwrap();
         let new_file = "test_new.html";
-        file_io.write_string_to_file(&folder_path, new_file, &html_content);
+        file_io
+            .write_string_to_file(&folder_path, new_file, &html_content)
+            .unwrap();
     }
 
     #[test]
@@ -421,9 +519,11 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
-        let json_content = file_io.load_file_as_string(&folder_path, file);
+        let json_content = file_io.load_file_as_string(&folder_path, file).unwrap();
         let new_file = "test_new.json";
-        file_io.write_string_to_file(&folder_path, new_file, &json_content);
+        file_io
+            .write_string_to_file(&folder_path, new_file, &json_content)
+            .unwrap();
     }
 
     #[test]
@@ -437,9 +537,26 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
-        let mut data = file_io.load_csv_file(&folder_path, file);
+        let mut data = file_io.load_csv_file(&folder_path, file).unwrap();
         let new_file = "test_new.csv";
-        file_io.write_csv_file(&folder_path, new_file, &mut data);
+        file_io
+            .write_csv_file(&folder_path, new_file, &mut data)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_scan_csv() {
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
+        let file = "test.csv";
+        let logger_name = "test_file_io";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_io");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        let file_io = FileIO::new(&project_logger);
+        let data = file_io.scan_csv_file(&folder_path, file).unwrap();
+        dbg!(data.collect().unwrap());
     }
 
     #[test]
@@ -453,8 +570,25 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         let _handle = project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
-        let mut data = file_io.load_parquet_file(&folder_path, file);
+        let mut data = file_io.load_parquet_file(&folder_path, file).unwrap();
         let new_file = "test_new.parquet";
-        file_io.write_parquet_file(&folder_path, new_file, &mut data);
+        file_io
+            .write_parquet_file(&folder_path, new_file, &mut data)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_scan_parquet() {
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
+        let file = "test.parquet";
+        let logger_name = "test_file_io";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_io");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        let file_io = FileIO::new(&project_logger);
+        let data = file_io.scan_parquet_file(&folder_path, file).unwrap();
+        dbg!(data.collect().unwrap());
     }
 }

@@ -61,7 +61,9 @@ pub fn timestamp_now(precision: SecPrecision) -> i64 {
         SecPrecision::Sec => Utc::now().timestamp(),
         SecPrecision::MilliSec => Utc::now().timestamp_millis(),
         SecPrecision::MicroSec => Utc::now().timestamp_micros(),
-        SecPrecision::NanoSec => Utc::now().timestamp_nanos(),
+        SecPrecision::NanoSec => Utc::now()
+            .timestamp_nanos_opt()
+            .unwrap_or_else(|| panic!("Error in parsing timestmap now to nanoseconds.")),
     }
 }
 
@@ -160,7 +162,9 @@ pub fn date_time_to_timestamp<T: TimeZone>(date_time: DateTime<T>, precision: Se
         SecPrecision::Sec => date_time.timestamp(),
         SecPrecision::MilliSec => date_time.timestamp_millis(),
         SecPrecision::MicroSec => date_time.timestamp_micros(),
-        SecPrecision::NanoSec => date_time.timestamp_nanos(),
+        SecPrecision::NanoSec => date_time
+            .timestamp_nanos_opt()
+            .unwrap_or_else(|| panic!("Error in parsing timestmap now to nanoseconds.")),
     }
 }
 
@@ -202,7 +206,7 @@ pub fn timezone_to_utc_date_time<T: TimeZone>(date_time: DateTime<T>) -> DateTim
 }
 
 pub fn naive_date_time_to_timezone(naive_date_time: NaiveDateTime, timezone: Tz) -> DateTime<Tz> {
-    match timezone.from_local_datetime(&naive_date_time).single() {
+    match timezone.from_local_datetime(&naive_date_time).earliest() {
         Some(dt) => dt,
         None => {
             panic!("Unable to convert naive date time {naive_date_time} into timezone {timezone}")

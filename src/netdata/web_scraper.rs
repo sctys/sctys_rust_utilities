@@ -1,5 +1,5 @@
+use polars::io::SerReader;
 use polars::prelude::{CsvReader, DataFrame};
-use polars_io::SerReader;
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::{Result, Url};
 use std::io::Cursor;
@@ -14,7 +14,7 @@ use super::data_struct::{BrowseSetting, RequestSetting, ResponseCheckResult, Url
 use crate::file_io::FileIO;
 use crate::logger::ProjectLogger;
 use crate::slack_messenger::SlackMessenger;
-use crate::{time_operation, utilities_function};
+use crate::{function_name, time_operation, utilities_function};
 
 #[derive(Debug)]
 pub struct WebScraper<'a> {
@@ -413,7 +413,17 @@ impl<'a> WebScraper<'a> {
 
     pub fn save_request_content(&self, folder_path: &Path, file: &str, content: &str) {
         self.file_io
-            .write_string_to_file(folder_path, file, content);
+            .write_string_to_file(folder_path, file, content)
+            .unwrap_or_else(|e| {
+                let function_name = function_name!(true);
+                let error_msg = format!(
+                    "Unable to save file {file} in {}. {e}",
+                    folder_path.display()
+                );
+                self.slack_messenger
+                    .retry_send_message(function_name, &error_msg, true);
+                panic!("{error_msg}")
+            });
     }
 
     pub fn multiple_requests(
@@ -740,7 +750,8 @@ mod tests {
         let file = "test_google_sheet.parquet";
         web_scraper
             .file_io
-            .write_parquet_file(&folder_path, file, &mut data);
+            .write_parquet_file(&folder_path, file, &mut data)
+            .unwrap();
     }
 
     #[test]
