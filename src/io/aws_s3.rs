@@ -348,8 +348,8 @@ impl<'a> AWSFileIO<'a> {
         let cursor = Cursor::new(&mut buffer);
         let csv_writer = CsvWriter::new(cursor);
         if let Err(e) = csv_writer
-            .has_header(true)
-            .with_delimiter(b',')
+            .include_header(true)
+            .with_separator(b',')
             .finish(data)
         {
             let error_str = format!(

@@ -5,6 +5,7 @@ pub mod misc;
 pub mod netdata;
 
 pub use io::aws_s3;
+pub use io::duck_db;
 pub use io::file_compress;
 pub use io::file_io;
 pub use logging::logger;

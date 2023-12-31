@@ -67,6 +67,34 @@ impl<'a> FileIO<'a> {
         )
     }
 
+    pub fn rename_file(
+        &self,
+        folder_path: &Path,
+        original_name: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        let original_full_path = Path::new(folder_path).join(original_name);
+        let new_full_path = Path::new(folder_path).join(new_name);
+        fs::rename(original_full_path, new_full_path).map_or_else(
+            |e| {
+                let error_str = format!(
+                    "Unable to rename file from {original_name} to {new_name} in {}. {e}",
+                    folder_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                Err(e)
+            },
+            |()| {
+                let debug_str = format!(
+                    "File {original_name} renamed to {new_name} in {}",
+                    folder_path.display()
+                );
+                self.project_logger.log_debug(&debug_str);
+                Ok(())
+            },
+        )
+    }
+
     fn get_last_modification_time(&self, full_path: &Path) -> Result<SystemTime> {
         fs::metadata(full_path).map_or_else(
             |e| {
@@ -300,8 +328,8 @@ impl<'a> FileIO<'a> {
     ) -> PolarsResult<()> {
         let csv_writer = CsvWriter::new(self.get_file_writer(folder_path, file)?);
         csv_writer
-            .has_header(true)
-            .with_delimiter(b',')
+            .include_header(true)
+            .with_separator(b',')
             .finish(data)
             .map_err(|e| {
                 let error_str = format!(
@@ -393,7 +421,7 @@ impl<'a> FileIO<'a> {
         LazyFrame::scan_parquet(&full_path, args).map_or_else(
             |e| {
                 let error_str = format!(
-                    "Unable to scan parquet file {}/file into lazy frame. {e}.",
+                    "Unable to scan parquet file {}/{file} into lazy frame. {e}.",
                     folder_path.display()
                 );
                 self.project_logger.log_error(&error_str);
@@ -403,6 +431,31 @@ impl<'a> FileIO<'a> {
                 let debug_str = format!("File {} scanned.", &full_path.display());
                 self.project_logger.log_debug(&debug_str);
                 Ok(lazy_frame)
+            },
+        )
+    }
+
+    pub fn sink_parquet_file(
+        &self,
+        folder_path: &Path,
+        file: &str,
+        data: LazyFrame,
+    ) -> PolarsResult<()> {
+        let full_path = folder_path.join(file);
+        let options = ParquetWriteOptions::default();
+        data.sink_parquet(full_path, options).map_or_else(
+            |e| {
+                let error_str = format!(
+                    "Unable to sink parquet file {}/{file} from lazy frame. {e}.",
+                    folder_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                Err(e)
+            },
+            |()| {
+                let debug_str = format!("File {}/{file} sinked.", &folder_path.display());
+                self.project_logger.log_debug(&debug_str);
+                Ok(())
             },
         )
     }
@@ -590,5 +643,23 @@ mod tests {
         let file_io = FileIO::new(&project_logger);
         let data = file_io.scan_parquet_file(&folder_path, file).unwrap();
         dbg!(data.collect().unwrap());
+    }
+
+    #[test]
+    fn test_sink_parquet() {
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
+        let file = "test.parquet";
+        let logger_name = "test_file_io";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_io");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        let file_io = FileIO::new(&project_logger);
+        let data = file_io.scan_parquet_file(&folder_path, file).unwrap();
+        let new_file = "test.parquet";
+        file_io
+            .sink_parquet_file(&folder_path, new_file, data)
+            .unwrap();
     }
 }
