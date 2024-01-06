@@ -33,3 +33,4 @@ thirtyfour_sync = "0.27.1"
 tokio = {version = "1", features = ["full"]}
 toml = "0.5"
 tqdm = "0.4"
+walkdir = "2.4"

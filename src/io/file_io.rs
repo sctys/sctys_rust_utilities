@@ -10,6 +10,7 @@ use std::fs::{File, ReadDir};
 use std::io::{Error, ErrorKind, Result};
 use std::path::Path;
 use std::time::SystemTime;
+use walkdir::WalkDir;
 
 #[derive(Debug)]
 pub struct FileIO<'a> {
@@ -132,7 +133,7 @@ impl<'a> FileIO<'a> {
     pub fn filter_element_after<T: TimeZone>(
         &self,
         element: &Result<DirEntry>,
-        cutoff_date_time: DateTime<T>,
+        cutoff_date_time: &DateTime<T>,
     ) -> bool {
         let dir_entry = match element {
             Ok(d_e) => d_e,
@@ -141,15 +142,66 @@ impl<'a> FileIO<'a> {
         let full_path = dir_entry.path();
         self.get_last_modification_time(&full_path)
             .map_or(false, |modified_time| {
-                time_operation::diff_system_time_date_time_sec(modified_time, cutoff_date_time) > 0
+                time_operation::diff_system_time_date_time_sec(&modified_time, cutoff_date_time) > 0
             })
+    }
+
+    pub fn count_files_modified_between<T: TimeZone>(
+        folder_path: &Path,
+        cutoff_date_time_early: &DateTime<T>,
+        cutoff_date_time_late: &DateTime<T>,
+    ) -> usize {
+        WalkDir::new(folder_path)
+            .into_iter()
+            .filter_map(|dir_entry| {
+                dir_entry.ok().and_then(|dir_entry| {
+                    dir_entry.metadata().ok().and_then(|metadata| {
+                        metadata.modified().ok().and_then(|modified| {
+                            (metadata.is_file()
+                                && (time_operation::diff_system_time_date_time_sec(
+                                    &modified,
+                                    cutoff_date_time_early,
+                                ) >= 0)
+                                && (time_operation::diff_system_time_date_time_sec(
+                                    &modified,
+                                    cutoff_date_time_late,
+                                ) < 0))
+                                .then_some(1)
+                        })
+                    })
+                })
+            })
+            .sum()
+    }
+
+    pub fn count_files_modified_after<T: TimeZone>(
+        folder_path: &Path,
+        cutoff_date_time: &DateTime<T>,
+    ) -> usize {
+        WalkDir::new(folder_path)
+            .into_iter()
+            .filter_map(|dir_entry| {
+                dir_entry.ok().and_then(|dir_entry| {
+                    dir_entry.metadata().ok().and_then(|metadata| {
+                        metadata.modified().ok().and_then(|modified| {
+                            (metadata.is_file()
+                                && (time_operation::diff_system_time_date_time_sec(
+                                    &modified,
+                                    cutoff_date_time,
+                                ) >= 0))
+                                .then_some(1)
+                        })
+                    })
+                })
+            })
+            .sum()
     }
 
     pub fn filter_element_between<T: TimeZone>(
         &self,
         element: &Result<DirEntry>,
-        cutoff_date_time_early: DateTime<T>,
-        cutoff_date_time_late: DateTime<T>,
+        cutoff_date_time_early: &DateTime<T>,
+        cutoff_date_time_late: &DateTime<T>,
     ) -> bool {
         let dir_entry = match element {
             Ok(d_e) => d_e,
@@ -159,11 +211,11 @@ impl<'a> FileIO<'a> {
         self.get_last_modification_time(&full_path)
             .map_or(false, |modified_time| {
                 (time_operation::diff_system_time_date_time_sec(
-                    modified_time,
+                    &modified_time,
                     cutoff_date_time_early,
                 ) >= 0)
                     && (time_operation::diff_system_time_date_time_sec(
-                        modified_time,
+                        &modified_time,
                         cutoff_date_time_late,
                     ) < 0)
             })
@@ -172,8 +224,8 @@ impl<'a> FileIO<'a> {
     pub fn obtain_folder_between_dates(
         &self,
         folder_path: &Path,
-        cutoff_date_time_early: DateTime<Utc>,
-        cutoff_date_time_late: DateTime<Utc>,
+        cutoff_date_time_early: &DateTime<Utc>,
+        cutoff_date_time_late: &DateTime<Utc>,
     ) -> Result<impl Iterator<Item = DateTime<Utc>>> {
         let start_time_int = cutoff_date_time_early
             .format("%Y%m%d")
@@ -518,7 +570,7 @@ mod tests {
         let file_io = FileIO::new(&project_logger);
         let elements = file_io.get_elements_in_folder(&folder_path).unwrap();
         let cutoff_date_time = time_operation::utc_date_time(2023, 1, 1, 0, 0, 0);
-        let file_list = elements.filter(|x| file_io.filter_element_after(x, cutoff_date_time));
+        let file_list = elements.filter(|x| file_io.filter_element_after(x, &cutoff_date_time));
         assert_eq!(file_list.count(), 1);
     }
 
@@ -538,9 +590,39 @@ mod tests {
         let cutoff_date_time_early = time_operation::utc_date_time(2021, 10, 1, 0, 0, 0);
         let cutoff_date_time_late = time_operation::utc_date_time(2021, 10, 31, 0, 0, 0);
         let file_list = elements.filter(|x| {
-            file_io.filter_element_between(x, cutoff_date_time_early, cutoff_date_time_late)
+            file_io.filter_element_between(x, &cutoff_date_time_early, &cutoff_date_time_late)
         });
         assert_eq!(file_list.count(), 2);
+    }
+
+    #[test]
+    fn test_walk_directory() {
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
+        for entry in WalkDir::new(folder_path) {
+            let entry = entry.unwrap();
+            let meta = entry.metadata().unwrap();
+            if meta.is_file() {
+                println!(
+                    "{:?}, {}, {:?}",
+                    entry.path().parent().unwrap(),
+                    entry.file_name().to_string_lossy(),
+                    meta.modified().unwrap()
+                )
+            }
+        }
+    }
+
+    #[test]
+    fn test_count_file_modified_in_between() {
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
+        let cutoff_date_time_early = time_operation::utc_date_time(2023, 2, 1, 0, 0, 0);
+        let cutoff_date_time_late = time_operation::utc_date_time(2023, 2, 28, 0, 0, 0);
+        let file_count = FileIO::count_files_modified_between(
+            &folder_path,
+            &cutoff_date_time_early,
+            &cutoff_date_time_late,
+        );
+        dbg!(file_count);
     }
 
     #[test]

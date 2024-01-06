@@ -191,7 +191,7 @@ impl<'a> AWSFileIO<'a> {
     pub fn filter_element_after<T: TimeZone>(
         &self,
         element: &Object,
-        cutoff_date_time: DateTime<T>,
+        cutoff_date_time: &DateTime<T>,
     ) -> bool {
         let cutoff_timestamp =
             time_operation::date_time_to_timestamp(cutoff_date_time, SecPrecision::Sec);
@@ -204,8 +204,8 @@ impl<'a> AWSFileIO<'a> {
     pub fn filter_element_between<T: TimeZone>(
         &self,
         element: &Object,
-        cutoff_date_time_early: DateTime<T>,
-        cutoff_date_time_late: DateTime<T>,
+        cutoff_date_time_early: &DateTime<T>,
+        cutoff_date_time_late: &DateTime<T>,
     ) -> bool {
         let cutoff_timestamp_early =
             time_operation::date_time_to_timestamp(cutoff_date_time_early, SecPrecision::Sec);

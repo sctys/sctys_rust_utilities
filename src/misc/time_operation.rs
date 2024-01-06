@@ -71,7 +71,7 @@ pub fn system_time_now() -> SystemTime {
     SystemTime::now()
 }
 
-pub fn system_time_to_timestamp(system_time: SystemTime, precision: SecPrecision) -> i64 {
+pub fn system_time_to_timestamp(system_time: &SystemTime, precision: SecPrecision) -> i64 {
     match system_time.duration_since(SystemTime::UNIX_EPOCH) {
         Ok(st) => match precision {
             SecPrecision::Sec => st.as_secs() as i64,
@@ -84,23 +84,23 @@ pub fn system_time_to_timestamp(system_time: SystemTime, precision: SecPrecision
 }
 
 pub fn diff_system_time_date_time_sec<T: TimeZone>(
-    system_time: SystemTime,
-    date_time: DateTime<T>,
+    system_time: &SystemTime,
+    date_time: &DateTime<T>,
 ) -> i64 {
     let system_timestamp = system_time_to_timestamp(system_time, SecPrecision::Sec);
     let date_timestamp = date_time_to_timestamp(date_time, SecPrecision::Sec);
     system_timestamp - date_timestamp
 }
 
-pub fn get_year<T: TimeZone>(date_time: DateTime<T>) -> i32 {
+pub fn get_year<T: TimeZone>(date_time: &DateTime<T>) -> i32 {
     date_time.year()
 }
 
-pub fn get_month<T: TimeZone>(date_time: DateTime<T>) -> u32 {
+pub fn get_month<T: TimeZone>(date_time: &DateTime<T>) -> u32 {
     date_time.month()
 }
 
-pub fn get_day<T: TimeZone>(date_time: DateTime<T>) -> u32 {
+pub fn get_day<T: TimeZone>(date_time: &DateTime<T>) -> u32 {
     date_time.day()
 }
 
@@ -157,7 +157,10 @@ pub fn int_date_to_utc_datetime(date_int: i64) -> DateTime<Utc> {
     utc_date_time(year as i32, month as u32, day as u32, 0, 0, 0)
 }
 
-pub fn date_time_to_timestamp<T: TimeZone>(date_time: DateTime<T>, precision: SecPrecision) -> i64 {
+pub fn date_time_to_timestamp<T: TimeZone>(
+    date_time: &DateTime<T>,
+    precision: SecPrecision,
+) -> i64 {
     match precision {
         SecPrecision::Sec => date_time.timestamp(),
         SecPrecision::MilliSec => date_time.timestamp_millis(),
@@ -196,17 +199,20 @@ pub fn naive_date_time_to_fixed_offset(
     offset.from_local_datetime(naive_date_time).unwrap()
 }
 
-pub fn utc_date_time_to_fixed_offset(date_time: DateTime<Utc>, hour: i32) -> DateTime<FixedOffset> {
+pub fn utc_date_time_to_fixed_offset(
+    date_time: &DateTime<Utc>,
+    hour: i32,
+) -> DateTime<FixedOffset> {
     let offset = fixed_offset_from_hour(hour);
     date_time.with_timezone(&offset)
 }
 
-pub fn timezone_to_utc_date_time<T: TimeZone>(date_time: DateTime<T>) -> DateTime<Utc> {
+pub fn timezone_to_utc_date_time<T: TimeZone>(date_time: &DateTime<T>) -> DateTime<Utc> {
     date_time.with_timezone(&Utc)
 }
 
-pub fn naive_date_time_to_timezone(naive_date_time: NaiveDateTime, timezone: Tz) -> DateTime<Tz> {
-    match timezone.from_local_datetime(&naive_date_time).earliest() {
+pub fn naive_date_time_to_timezone(naive_date_time: &NaiveDateTime, timezone: Tz) -> DateTime<Tz> {
+    match timezone.from_local_datetime(naive_date_time).earliest() {
         Some(dt) => dt,
         None => {
             panic!("Unable to convert naive date time {naive_date_time} into timezone {timezone}")
@@ -214,7 +220,7 @@ pub fn naive_date_time_to_timezone(naive_date_time: NaiveDateTime, timezone: Tz)
     }
 }
 
-pub fn utc_date_time_to_timezone(date_time: DateTime<Utc>, timezone: Tz) -> DateTime<Tz> {
+pub fn utc_date_time_to_timezone(date_time: &DateTime<Utc>, timezone: Tz) -> DateTime<Tz> {
     date_time.with_timezone(&timezone)
 }
 
@@ -259,7 +265,7 @@ mod tests {
     fn test_timestamp_conversion() {
         let (year, month, day, hour, min, sec) = (2021, 10, 15, 18, 36, 44);
         let utc_datetime = utc_date_time(year, month, day, hour, min, sec);
-        let timestamp = date_time_to_timestamp(utc_datetime, SecPrecision::Sec);
+        let timestamp = date_time_to_timestamp(&utc_datetime, SecPrecision::Sec);
         assert_eq!(
             utc_date_time_from_timestamp(timestamp, SecPrecision::Sec),
             utc_datetime
@@ -281,7 +287,7 @@ mod tests {
         let naive_datetime = naive_date_time(year, month, day, hour, min, sec);
         let local_datetime = naive_date_time_to_fixed_offset(&naive_datetime, offset_hour);
         let utc_datetime = utc_date_time(year, month, day, hour - offset_hour as u32, min, sec);
-        assert_eq!(timezone_to_utc_date_time(local_datetime), utc_datetime);
+        assert_eq!(timezone_to_utc_date_time(&local_datetime), utc_datetime);
     }
 
     #[test]
@@ -289,8 +295,8 @@ mod tests {
         let (year, month, day, hour, min, sec) = (2021, 10, 15, 18, 36, 44);
         let timezone = Europe::London;
         let naive_datetime = naive_date_time(year, month, day, hour, min, sec);
-        let local_datetime = naive_date_time_to_timezone(naive_datetime, timezone);
+        let local_datetime = naive_date_time_to_timezone(&naive_datetime, timezone);
         let utc_datetime = utc_date_time(year, month, day, hour - 1, min, sec);
-        assert_eq!(timezone_to_utc_date_time(local_datetime), utc_datetime);
+        assert_eq!(timezone_to_utc_date_time(&local_datetime), utc_datetime);
     }
 }
