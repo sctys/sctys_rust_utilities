@@ -244,15 +244,17 @@ impl<'a> FileIO<'a> {
         let elements = self.get_elements_in_folder(folder_path)?;
         Ok(elements.filter_map(move |dir| {
             dir.ok().and_then(|element| {
-                element
-                    .file_name()
-                    .to_string_lossy()
-                    .parse::<i64>()
-                    .ok()
-                    .and_then(|folder_date| {
+                element.file_name().to_str().and_then(|file_name| {
+                    let file_name_date = if file_name.len() < 8 {
+                        format!("{file_name}01")
+                    } else {
+                        file_name.to_string()
+                    };
+                    file_name_date.parse::<i64>().ok().and_then(|folder_date| {
                         ((folder_date >= start_time_int) && (folder_date < end_time_int))
                             .then_some(time_operation::int_date_to_utc_datetime(folder_date))
                     })
+                })
             })
         }))
     }

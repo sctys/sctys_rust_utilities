@@ -141,6 +141,28 @@ impl<'a> DuckDB<'a> {
         );
         self.sql_execution(conn, &main_query_str)
     }
+
+    pub fn count_row_in_table(
+        &self,
+        conn: &Connection,
+        table_name: &str,
+        distinct_columns: Option<&[&str]>,
+    ) -> i32 {
+        let query_str = match distinct_columns {
+            Some(columns) => {
+                let columns_str = columns.join(", ");
+                format!("SELECT COUNT(DISTINCT ({columns_str})) FROM {table_name};")
+            }
+            None => {
+                format!("SELECT DISTINCT COUNT(*) FROM {table_name};")
+            }
+        };
+        let stmt = conn.prepare(&query_str);
+        stmt.ok().map_or(-1, |mut stmt| {
+            let row = stmt.query_row([], |row| row.get(0));
+            row.ok().map_or(-1, |row| row)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -225,5 +247,23 @@ mod tests {
         duckdb
             .export_table_to_parquet(&conn, table_name, &folder_path, data_file)
             .unwrap();
+    }
+
+    #[test]
+    fn test_count_row_in_table() {
+        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
+        let db_file = "test.duckdb";
+        let logger_name = "test_duck_db";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_io");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        let duckdb = DuckDB::new(&project_logger);
+        let conn = duckdb.create_connection(&folder_path, db_file).unwrap();
+        let table_name = "test";
+        let distinct_columns = None;
+        let row_count = duckdb.count_row_in_table(&conn, table_name, distinct_columns);
+        dbg!(row_count);
     }
 }
