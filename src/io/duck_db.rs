@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use duckdb::{AppenderParams, Connection, Result};
+use duckdb::{AppenderParams, Connection, Result, AccessMode, Config};
 
 use crate::logger::ProjectLogger;
 
@@ -27,6 +27,33 @@ impl<'a> DuckDB<'a> {
             |conn| {
                 let debug_str = format!(
                     "DuckDB at {}/{file_name} connected.",
+                    &folder_path.display()
+                );
+                self.project_logger.log_debug(&debug_str);
+                Ok(conn)
+            },
+        )
+    }
+
+    pub fn create_read_only_connection(&self, folder_path: &Path, file_name: &str) -> Result<Connection> {
+        let full_path = Path::new(folder_path).join(file_name);
+        let config = Config::default().access_mode(AccessMode::ReadOnly).unwrap_or_else(|e| {
+            panic!("Unable to set read-only access mode to DuckDB at {}/{file_name}. {e}",
+                &folder_path.display()
+            );
+        });
+        Connection::open_with_flags(full_path, config).map_or_else(
+            |e| {
+                let error_str = format!(
+                    "Unable to open read-only connection to DuckDB at {}/{file_name}. {e}",
+                    &folder_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                Err(e)
+            },
+            |conn| {
+                let debug_str = format!(
+                    "DuckDB at {}/{file_name} connected at read-only mode.",
                     &folder_path.display()
                 );
                 self.project_logger.log_debug(&debug_str);
@@ -147,7 +174,7 @@ impl<'a> DuckDB<'a> {
         conn: &Connection,
         table_name: &str,
         distinct_columns: Option<&[&str]>,
-    ) -> i32 {
+    ) -> usize {
         let query_str = match distinct_columns {
             Some(columns) => {
                 let columns_str = columns.join(", ");
@@ -158,9 +185,9 @@ impl<'a> DuckDB<'a> {
             }
         };
         let stmt = conn.prepare(&query_str);
-        stmt.ok().map_or(-1, |mut stmt| {
+        stmt.ok().map_or(0, |mut stmt| {
             let row = stmt.query_row([], |row| row.get(0));
-            row.ok().map_or(-1, |row| row)
+            row.ok().map_or(0, |row| row)
         })
     }
 }
