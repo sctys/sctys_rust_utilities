@@ -105,10 +105,8 @@ pub fn get_day<T: TimeZone>(date_time: &DateTime<T>) -> u32 {
 }
 
 pub fn naive_date(year: i32, month: u32, day: u32) -> NaiveDate {
-    match NaiveDate::from_ymd_opt(year, month, day) {
-        Some(d) => d,
-        None => panic!("Invalid date {year}, {month}, {day}"),
-    }
+    NaiveDate::from_ymd_opt(year, month, day)
+        .unwrap_or_else(|| panic!("Invalid date {year}, {month}, {day}"))
 }
 
 pub fn naive_date_time(
@@ -120,11 +118,16 @@ pub fn naive_date_time(
     sec: u32,
 ) -> NaiveDateTime {
     let date = naive_date(year, month, day);
-    let time = match NaiveTime::from_hms_opt(hour, min, sec) {
-        Some(t) => t,
-        None => panic!("Invalid time {hour}, {min}, {sec}"),
-    };
+    let time = NaiveTime::from_hms_opt(hour, min, sec)
+        .unwrap_or_else(|| panic!("Invalid time {hour}, {min}, {sec}"));
     NaiveDateTime::new(date, time)
+}
+
+pub fn naive_date_to_naive_date_time(naive_date: &NaiveDate) -> NaiveDateTime {
+    let year = naive_date.year();
+    let month = naive_date.month();
+    let day = naive_date.day();
+    naive_date_time(year, month, day, 0, 0, 0)
 }
 
 pub fn utc_date_time(
@@ -135,15 +138,11 @@ pub fn utc_date_time(
     min: u32,
     sec: u32,
 ) -> DateTime<Utc> {
-    match Utc
-        .with_ymd_and_hms(year, month, day, hour, min, sec)
+    Utc.with_ymd_and_hms(year, month, day, hour, min, sec)
         .single()
-    {
-        Some(dt) => dt,
-        None => {
+        .unwrap_or_else(|| {
             panic!("Unable to construct the date time {year}, {month}, {day}, {hour}, {min}, {sec}")
-        }
-    }
+        })
 }
 
 pub fn naive_date_time_to_utc(naive_date_time: &NaiveDateTime) -> DateTime<Utc> {
@@ -178,17 +177,12 @@ pub fn utc_date_time_from_timestamp(timestamp: i64, precision: SecPrecision) -> 
         SecPrecision::MicroSec => (timestamp / ONE_E6, (timestamp % ONE_E6 * ONE_E3) as u32),
         SecPrecision::NanoSec => (timestamp / ONE_E9, (timestamp % ONE_E9) as u32),
     };
-    match NaiveDateTime::from_timestamp_opt(secs, nsecs) {
-        Some(dt) => naive_date_time_to_utc(&dt),
-        None => panic!("Invalid timestamp {timestamp}"),
-    }
+    DateTime::from_timestamp(secs, nsecs).unwrap_or_else(|| panic!("Invalid timestamp {timestamp}"))
 }
 
 fn fixed_offset_from_hour(hour: i32) -> FixedOffset {
-    match FixedOffset::east_opt(hour * SEC_TO_HOUR) {
-        Some(o) => o,
-        None => panic!("Invalid time offset {hour}"),
-    }
+    FixedOffset::east_opt(hour * SEC_TO_HOUR)
+        .unwrap_or_else(|| panic!("Invalid time offset {hour}"))
 }
 
 pub fn naive_date_time_to_fixed_offset(
@@ -241,9 +235,14 @@ pub fn naive_date_time_from_string(date_time_str: &str, fmt: &str) -> NaiveDateT
 }
 
 pub fn date_time_timezone_from_string(date_time_str: &str, fmt: &str) -> DateTime<FixedOffset> {
-    match DateTime::parse_from_str(date_time_str, fmt) {
-        Ok(dt) => dt,
-        Err(e) => panic! ("Unable to parse the date time with time zone from string for {date_time_str} in {fmt}, {e}")
+    if date_time_str.ends_with('Z') {
+        DateTime::parse_from_rfc3339(date_time_str).unwrap_or_else(|e| {
+            panic!("Unable to parse the date time with time zone from string for {date_time_str} in rfc3399, {e}")
+        })
+    } else {
+        DateTime::parse_from_str(date_time_str, fmt).unwrap_or_else(|e| {
+            panic!("Unable to parse the date time with time zone from string for {date_time_str} in {fmt}, {e}")
+        })
     }
 }
 
