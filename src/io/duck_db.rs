@@ -240,6 +240,33 @@ impl<'a> DuckDB<'a> {
             self.insert_table_from_parquet(conn, table_name, folder_path, file_name)
         }
     }
+
+    pub fn insert_table_from_parquet_with_constant_column(
+        &self,
+        conn: &Connection,
+        table_name: &str,
+        folder_path: &Path,
+        file_name: &str,
+        column_name: &str,
+        column_value: i32,
+    ) -> Result<()> {
+        self.create_table_from_parquet(conn, "temp_table", folder_path, file_name)?;
+        let query_str = format!("ALTER TABLE temp_table ADD COLUMN {column_name} INT;");
+        self.sql_execution(conn, &query_str)?;
+        let query_str = format!("UPDATE temp_table SET {column_name} = {column_value};");
+        self.sql_execution(conn, &query_str)?;
+        let row_count = self.count_row_in_table(conn, table_name, None);
+        if row_count == 0 {
+            let query_str =
+                format!("CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM temp_table;");
+            self.sql_execution(conn, &query_str)?;
+        } else {
+            let query_str = format!("INSERT INTO {table_name} SELECT * FROM temp_table;");
+            self.sql_execution(conn, &query_str)?;
+        }
+        let query_str = "DROP TABLE temp_table;";
+        self.sql_execution(conn, query_str)
+    }
 }
 
 #[cfg(test)]
