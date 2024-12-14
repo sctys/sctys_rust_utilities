@@ -38,7 +38,7 @@ pub struct AWSFileIO<'a> {
 impl<'a> AWSFileIO<'a> {
     const MAX_KEY: i32 = 100;
 
-    pub async fn new(project_logger: &'a ProjectLogger) -> AWSFileIO {
+    pub async fn new(project_logger: &'a ProjectLogger) -> AWSFileIO<'a> {
         let api_key = APIKey::load_apikey();
         let credentials = Credentials::new(
             &api_key.aws_api_id,

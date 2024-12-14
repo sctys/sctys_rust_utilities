@@ -6,7 +6,7 @@ pub struct Redis<'a> {
 }
 
 impl<'a> Redis<'a> {
-    const REDIS_PATH: &str = "redis://127.0.0.1:6379";
+    const REDIS_PATH: &'a str = "redis://127.0.0.1:6379";
 
     pub fn new(project_logger: &'a ProjectLogger) -> Self {
         Self { project_logger }

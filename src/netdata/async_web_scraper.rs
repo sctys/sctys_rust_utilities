@@ -41,10 +41,10 @@ impl<'a> AsyncWebScraper<'a> {
     const CHUNK_SIZE_REQUEST: usize = 100;
     const CHUNK_SIZE_BROWSE: usize = 25;
     const WEB_DRIVER_PORT: u32 = 4444;
-    const WEB_DRIVER_PROG: &str = "http://localhost:";
-    const CHROME_PROCESS: &str = "chromedriver";
-    const GOOGLE_SHEET_URL: &str = "https://docs.google.com/spreadsheets/d/";
-    const GOOGLE_SHEET_REPLACE_TOKEN: (&str, &str) = ("edit#gid=", "export?format=csv&gid=");
+    const WEB_DRIVER_PROG: &'a str = "http://localhost:";
+    const CHROME_PROCESS: &'a str = "chromedriver";
+    const GOOGLE_SHEET_URL: &'a str = "https://docs.google.com/spreadsheets/d/";
+    const GOOGLE_SHEET_REPLACE_TOKEN: (&'a str, &'a str) = ("edit#gid=", "export?format=csv&gid=");
 
     pub fn new(
         project_logger: &'a ProjectLogger,
@@ -454,7 +454,7 @@ impl<'a> AsyncWebScraper<'a> {
 
     pub async fn multiple_requests_sequential(
         &self,
-        url_file_list: &Vec<UrlFile>,
+        url_file_list: &[UrlFile],
         request_builder_func: fn(Url) -> RequestBuilder,
         folder_path: &Path,
         check_func: fn(&str) -> ResponseCheckResult,
@@ -564,7 +564,7 @@ impl<'a> AsyncWebScraper<'a> {
 
     pub async fn multiple_requests_with_private_proxy(
         &self,
-        url_file_list: &Vec<UrlFile>,
+        url_file_list: &[UrlFile],
         private_proxy: &mut PrivateProxy,
         request_builder_func: fn(Proxy, Url) -> RequestBuilder,
         folder_path: &Path,
@@ -799,7 +799,7 @@ impl<'a> AsyncWebScraper<'a> {
 
     pub async fn multiple_browse_requests_sequential<F>(
         &self,
-        url_file_list: &Vec<UrlFile>,
+        url_file_list: &[UrlFile],
         browser: &ChromeCapabilities,
         folder_path: &Path,
         browse_action: &F,
@@ -932,7 +932,7 @@ impl<'a> AsyncWebScraper<'a> {
     #[allow(clippy::too_many_arguments)]
     pub async fn multiple_browse_requests_with_private_vpn<F>(
         &self,
-        url_file_list: &Vec<UrlFile>,
+        url_file_list: &[UrlFile],
         private_vpn: &mut PrivateVpn,
         browser: &ChromeCapabilities,
         folder_path: &Path,

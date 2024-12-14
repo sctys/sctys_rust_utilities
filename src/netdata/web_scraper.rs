@@ -38,11 +38,11 @@ impl<'a> WebScraper<'a> {
     const CONSECUTIVE_SLEEP: (Duration, Duration) =
         (Duration::from_secs(0), Duration::from_secs(30));
     const TIMEOUT: Duration = Duration::from_secs(120);
-    const GOOGLE_SHEET_URL: &str = "https://docs.google.com/spreadsheets/d/";
-    const GOOGLE_SHEET_REPLACE_TOKEN: (&str, &str) = ("edit#gid=", "export?format=csv&gid=");
+    const GOOGLE_SHEET_URL: &'a str = "https://docs.google.com/spreadsheets/d/";
+    const GOOGLE_SHEET_REPLACE_TOKEN: (&'a str, &'a str) = ("edit#gid=", "export?format=csv&gid=");
     const WEB_DRIVER_PORT: u32 = 4444;
-    const WEB_DRIVER_PROG: &str = "http://localhost:";
-    const CHROME_PROCESS: &str = "chromedriver";
+    const WEB_DRIVER_PROG: &'a str = "http://localhost:";
+    const CHROME_PROCESS: &'a str = "chromedriver";
 
     pub fn new(
         project_logger: &'a ProjectLogger,
@@ -428,7 +428,7 @@ impl<'a> WebScraper<'a> {
 
     pub fn multiple_requests(
         &mut self,
-        url_file_list: &'a Vec<UrlFile>,
+        url_file_list: &'a [UrlFile],
         folder_path: &Path,
         check_func: fn(&str) -> ResponseCheckResult,
         request_setting: RequestSetting,
@@ -471,7 +471,7 @@ impl<'a> WebScraper<'a> {
 
     pub fn multiple_requests_with_builder(
         &mut self,
-        url_file_list: &'a Vec<UrlFile>,
+        url_file_list: &'a [UrlFile],
         request_builder_list: &[RequestBuilder],
         folder_path: &Path,
         check_func: fn(&str) -> ResponseCheckResult,
@@ -540,6 +540,7 @@ impl<'a> WebScraper<'a> {
         CsvReader::new(cursor).has_header(true).finish().ok()
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn browse_page(&mut self, url: &Url) -> WebDriverResult<()> {
         match &mut self.web_driver {
             Some(w_d) => w_d.get(url.clone()),
@@ -550,6 +551,7 @@ impl<'a> WebScraper<'a> {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn browse_request(
         &mut self,
         url: &Url,
@@ -616,7 +618,7 @@ impl<'a> WebScraper<'a> {
 
     pub fn multiple_browse_requests(
         &mut self,
-        url_file_list: &'a Vec<UrlFile>,
+        url_file_list: &'a [UrlFile],
         folder_path: &Path,
         browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
         check_func: fn(&str) -> ResponseCheckResult,
@@ -798,6 +800,7 @@ mod tests {
     const WAIT_TIME: Duration = Duration::from_secs(5);
     const ELEMENT_CSS: &str = "div#matchList.matchList";
 
+    #[allow(clippy::result_large_err)]
     fn extra_action(web_driver: &mut WebDriver) -> WebDriverResult<()> {
         web_driver.set_implicit_wait_timeout(WAIT_TIME)?;
         web_driver
