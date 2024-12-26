@@ -114,13 +114,25 @@ impl<'a> DuckDB<'a> {
         &self,
         conn: &Connection,
         table_name: &str,
+        column_names: Option<&[&str]>,
         folder_path: &Path,
         file_name: &str,
     ) -> Result<()> {
-        let query_str = format!(
-            "COPY {table_name} FROM '{}/{file_name}' (FORMAT PARQUET);",
-            folder_path.display()
-        );
+        let query_str = if let Some(column_names) = column_names {
+            let column_names_str = column_names
+                .iter()
+                .map(|column| format!("\"{column}\""))
+                .join(", ");
+            format!(
+                "COPY {table_name} ({column_names_str}) FROM '{}/{file_name}' (FORMAT PARQUET);",
+                folder_path.display()
+            )
+        } else {
+            format!(
+                "COPY {table_name} FROM '{}/{file_name}' (FORMAT PARQUET);",
+                folder_path.display()
+            )
+        };
         self.sql_execution(conn, &query_str)
     }
 
@@ -215,6 +227,7 @@ impl<'a> DuckDB<'a> {
         &self,
         conn: &Connection,
         table_name: &str,
+        column_names: Option<&[&str]>,
         folder_path: &Path,
         file_name: &str,
         deduplicate_columns: &[&str],
@@ -237,7 +250,7 @@ impl<'a> DuckDB<'a> {
                 &new_table_name,
                 &where_clause,
             )?;
-            self.insert_table_from_parquet(conn, table_name, folder_path, file_name)
+            self.insert_table_from_parquet(conn, table_name, column_names, folder_path, file_name)
         }
     }
 
@@ -311,7 +324,7 @@ mod tests {
         let data_file = "test.parquet";
         let table_name = "test";
         duckdb
-            .insert_table_from_parquet(&conn, table_name, &folder_path, data_file)
+            .insert_table_from_parquet(&conn, table_name, None, &folder_path, data_file)
             .unwrap();
     }
 
@@ -392,6 +405,7 @@ mod tests {
             .deduplication_and_append(
                 &conn,
                 table_name,
+                None,
                 &folder_path,
                 data_file,
                 &deduplicate_columns,

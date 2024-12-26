@@ -15,7 +15,7 @@ use chrono::{DateTime, TimeZone};
 use polars::error::PolarsError;
 use polars::frame::DataFrame;
 use polars::io::{SerReader, SerWriter};
-use polars::prelude::{CsvReader, CsvWriter, ParquetReader, ParquetWriter};
+use polars::prelude::{CsvReadOptions, CsvWriter, ParquetReader, ParquetWriter};
 use serde::Deserialize;
 use std::env;
 use std::fs;
@@ -325,7 +325,7 @@ impl<'a> AWSFileIO<'a> {
             AWSLoadFileError::ByteStreamError(e)
         });
         let cursor = Cursor::new(byte?.into_bytes());
-        CsvReader::new(cursor).has_header(true).finish().map_or_else(|e| {
+        CsvReadOptions::default().with_has_header(true).into_reader_with_file_handle(cursor).finish().map_or_else(|e| {
                 let error_str = format!("Unable to convert the bytes from file {file} from folder {} in bucket {bucket_name} into data frame. {e}", folder_path.display());
                 self.project_logger.log_error(&error_str);
                 Err(AWSLoadFileError::PolarsError(e))

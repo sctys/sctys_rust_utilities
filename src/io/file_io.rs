@@ -329,31 +329,41 @@ impl<'a> FileIO<'a> {
     // allow for more complicated loading options from the reader
     pub fn get_csv_reader(&self, folder_path: &Path, file: &str) -> PolarsResult<CsvReader<File>> {
         let full_path = folder_path.join(file);
-        CsvReader::from_path(&full_path).map_or_else(
-            |e| {
+
+        match File::open(&full_path) {
+            Err(e) => {
                 let error_str = format!("Unable to load file {} as csv. {e}", &full_path.display());
                 self.project_logger.log_error(&error_str);
-                Err(e)
-            },
-            |csv_reader| {
+                Err(PolarsError::IO {
+                    error: e.into(),
+                    msg: None,
+                })
+            }
+            Ok(file) => {
                 let debug_str = format!("File {} loaded.", &full_path.display());
                 self.project_logger.log_debug(&debug_str);
-                Ok(csv_reader)
-            },
-        )
+
+                // Use CsvReader::new with the file.
+                Ok(CsvReader::new(file))
+            }
+        }
     }
 
     // directly loading the csv file with default options
     pub fn load_csv_file(&self, folder_path: &Path, file: &str) -> PolarsResult<DataFrame> {
-        let csv_reader = self.get_csv_reader(folder_path, file)?;
-        csv_reader.has_header(true).finish().map_err(|e| {
-            let error_str = format!(
-                "Unable to convert csv file {}/{file} into data frame. {e}",
-                folder_path.display()
-            );
-            self.project_logger.log_error(&error_str);
-            e
-        })
+        let full_path = folder_path.join(file);
+        CsvReadOptions::default()
+            .with_has_header(true)
+            .try_into_reader_with_file_path(Some(full_path))
+            .map_err(|e| {
+                let error_str = format!(
+                    "Unable to convert csv file {}/{file} into data frame. {e}",
+                    folder_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                e
+            })
+            .and_then(|reader| reader.finish())
     }
 
     // allow for more complicated writing options for the writer
@@ -497,7 +507,7 @@ impl<'a> FileIO<'a> {
     ) -> PolarsResult<()> {
         let full_path = folder_path.join(file);
         let options = ParquetWriteOptions::default();
-        data.sink_parquet(full_path, options).map_or_else(
+        data.sink_parquet(&full_path, options, None).map_or_else(
             |e| {
                 let error_str = format!(
                     "Unable to sink parquet file {}/{file} from lazy frame. {e}.",

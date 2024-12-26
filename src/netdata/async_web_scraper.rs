@@ -1,7 +1,7 @@
 use futures::future;
 use itertools::Itertools;
 use polars::io::SerReader;
-use polars::prelude::{CsvReader, DataFrame};
+use polars::prelude::{CsvReadOptions, DataFrame};
 use reqwest::{Client, Proxy, RequestBuilder, Url};
 use sctys_proxy::{PrivateProxy, PrivateVpn, ScraperProxy};
 use std::future::Future;
@@ -641,7 +641,11 @@ impl<'a> AsyncWebScraper<'a> {
 
     pub fn convert_google_sheet_string_to_data_frame(google_sheet_csv: &str) -> Option<DataFrame> {
         let cursor = Cursor::new(google_sheet_csv);
-        CsvReader::new(cursor).has_header(true).finish().ok()
+        CsvReadOptions::default()
+            .with_has_header(true)
+            .into_reader_with_file_handle(cursor)
+            .finish()
+            .ok()
     }
 
     pub async fn browse_page(web_driver: &mut WebDriver, url: &Url) -> WebDriverResult<()> {
