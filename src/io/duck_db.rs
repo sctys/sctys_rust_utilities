@@ -299,7 +299,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let duckdb = DuckDB::new(&project_logger);
         let conn = duckdb.create_connection(&folder_path, db_file).unwrap();
         let data_file = "test.parquet";
@@ -318,7 +318,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let duckdb = DuckDB::new(&project_logger);
         let conn = duckdb.create_connection(&folder_path, db_file).unwrap();
         let data_file = "test.parquet";
@@ -337,7 +337,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let duckdb = DuckDB::new(&project_logger);
         let conn = duckdb.create_connection(&folder_path, db_file).unwrap();
         let table_name = "test";
@@ -356,7 +356,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let duckdb = DuckDB::new(&project_logger);
         let conn = duckdb.create_connection(&folder_path, db_file).unwrap();
         let data_file = "test_duckdb_out.parquet";
@@ -375,7 +375,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let duckdb = DuckDB::new(&project_logger);
         let conn = duckdb
             .create_read_only_connection(&folder_path, db_file)
@@ -395,7 +395,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let duckdb = DuckDB::new(&project_logger);
         let conn = duckdb.create_connection(&folder_path, db_file).unwrap();
         let table_name = "test2";

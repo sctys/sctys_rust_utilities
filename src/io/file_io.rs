@@ -9,6 +9,7 @@ use std::fs::{self, DirEntry};
 use std::fs::{File, ReadDir};
 use std::io::{Error, ErrorKind, Result};
 use std::path::Path;
+use std::process::Command;
 use std::time::SystemTime;
 use walkdir::WalkDir;
 
@@ -94,6 +95,92 @@ impl<'a> FileIO<'a> {
                 Ok(())
             },
         )
+    }
+
+    pub fn copy_folder(&self, source_path: &Path, destination_path: &Path) -> Result<()> {
+        let output = Command::new("rsync")
+            .arg("-a")
+            .arg("--ignore-existing")
+            .arg("--inplace")
+            .arg(source_path.join("").as_os_str())
+            .arg(destination_path.as_os_str())
+            .output();
+
+        match output {
+            Ok(output) => {
+                if output.status.success() {
+                    let debug_str = format!(
+                        "Copied folder from {} to {}",
+                        source_path.display(),
+                        destination_path.display()
+                    );
+                    self.project_logger.log_debug(&debug_str);
+                    Ok(())
+                } else {
+                    let error_str = format!(
+                        "Unable to copy folder from {} to {}, {}",
+                        source_path.display(),
+                        destination_path.display(),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    self.project_logger.log_error(&error_str);
+                    Err(Error::new(ErrorKind::Other, error_str))
+                }
+            }
+            Err(e) => {
+                let error_str = format!(
+                    "Unable to copy folder from {} to {}, {e}",
+                    source_path.display(),
+                    destination_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                Err(e)
+            }
+        }
+    }
+
+    pub fn safe_remove_folder(&self, folder_path: &Path) -> Result<()> {
+        if folder_path.as_os_str() == ""
+            || folder_path.as_os_str() == "/"
+            || folder_path.as_os_str() == "."
+        {
+            let error_str = format!("Folder path is invalid: {}", folder_path.display());
+            self.project_logger.log_error(&error_str);
+            Err(Error::new(ErrorKind::InvalidInput, error_str))
+        } else if folder_path.exists() {
+            let output = Command::new("rm")
+                .arg("-rf")
+                .arg(folder_path.as_os_str())
+                .output();
+
+            match output {
+                Ok(output) => {
+                    if output.status.success() {
+                        let debug_str = format!("Folder {} removed", folder_path.display());
+                        self.project_logger.log_debug(&debug_str);
+                        Ok(())
+                    } else {
+                        let error_str = format!(
+                            "Unable to remove folder {}, {}",
+                            folder_path.display(),
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                        self.project_logger.log_error(&error_str);
+                        Err(Error::new(ErrorKind::Other, error_str))
+                    }
+                }
+                Err(e) => {
+                    let error_str =
+                        format!("Unable to remove folder {}, {e}", folder_path.display());
+                    self.project_logger.log_error(&error_str);
+                    Err(e)
+                }
+            }
+        } else {
+            let error_str = format!("Folder {} does not exist", folder_path.display());
+            self.project_logger.log_error(&error_str);
+            Err(Error::new(ErrorKind::NotFound, error_str))
+        }
     }
 
     fn get_last_modification_time(&self, full_path: &Path) -> Result<SystemTime> {
@@ -558,7 +645,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         file_io
             .create_directory_if_not_exists(&folder_path)
@@ -566,6 +653,35 @@ mod tests {
         assert!(FileIO::check_folder_exist(&folder_path));
         fs::remove_dir(&folder_path).unwrap();
         assert!(!FileIO::check_folder_exist(&folder_path));
+    }
+
+    #[test]
+    fn test_copy_folder() {
+        let source_folder = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
+        let target_folder = Path::new(&env::var("SCTYS_SSD_DATA").unwrap()).join("test_io");
+        let logger_name = "test_file_io";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_io");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        project_logger.set_logger(LevelFilter::Debug);
+        let file_io = FileIO::new(&project_logger);
+        file_io.copy_folder(&source_folder, &target_folder).unwrap();
+        assert!(FileIO::check_folder_exist(&target_folder));
+    }
+
+    #[test]
+    fn test_safe_remove_folder() {
+        let target_folder = Path::new(&env::var("SCTYS_SSD_DATA").unwrap()).join("test_io");
+        let logger_name = "test_file_io";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_io");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        project_logger.set_logger(LevelFilter::Debug);
+        let file_io = FileIO::new(&project_logger);
+        file_io.safe_remove_folder(&target_folder).unwrap();
+        assert!(!FileIO::check_folder_exist(&target_folder));
     }
 
     #[test]
@@ -578,7 +694,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let elements = file_io.get_elements_in_folder(&folder_path).unwrap();
         let cutoff_date_time = time_operation::utc_date_time(2023, 1, 1, 0, 0, 0);
@@ -596,7 +712,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let elements = file_io.get_elements_in_folder(&folder_path).unwrap();
         let cutoff_date_time_early = time_operation::utc_date_time(2021, 10, 1, 0, 0, 0);
@@ -646,7 +762,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let html_content = file_io.load_file_as_string(&folder_path, file).unwrap();
         let new_file = "test_new.html";
@@ -664,7 +780,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let json_content = file_io.load_file_as_string(&folder_path, file).unwrap();
         let new_file = "test_new.json";
@@ -682,7 +798,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let mut data = file_io.load_csv_file(&folder_path, file).unwrap();
         let new_file = "test_new.csv";
@@ -700,7 +816,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let data = file_io.scan_csv_file(&folder_path, file).unwrap();
         dbg!(data.collect().unwrap());
@@ -715,7 +831,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let mut data = file_io.load_parquet_file(&folder_path, file).unwrap();
         let new_file = "test_new.parquet";
@@ -733,7 +849,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let data = file_io.scan_parquet_file(&folder_path, file).unwrap();
         dbg!(data.collect().unwrap());
@@ -748,7 +864,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let data = file_io.scan_parquet_file(&folder_path, file).unwrap();
         let new_file = "test.parquet";

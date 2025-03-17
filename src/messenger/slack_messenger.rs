@@ -178,7 +178,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_notify");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let channel_config_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Config")
             .join("config_sctys_rust_utilities");

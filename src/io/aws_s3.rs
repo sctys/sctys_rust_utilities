@@ -896,7 +896,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let bucket_name = "sctys";
         assert!(aws_file_io.check_bucket_exist(bucket_name).await);
@@ -911,7 +911,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let bucket_name = "sctys";
         let folder_name = Path::new("data/poisson_football");
@@ -935,7 +935,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let bucket_name = "sctys";
         let folder_name = Path::new("data/poisson_football/");
@@ -960,7 +960,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let bucket_name = "sctys";
         let folder_name = Path::new("data/test_folder/");
@@ -977,7 +977,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let bucket_name = "sctys";
         let folder_name = Path::new("data/poisson_football");
@@ -995,7 +995,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let bucket_name = "sctys";
         let folder_name = Path::new("data/poisson_football/");
@@ -1014,7 +1014,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let local_folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let local_file = "test.html";
@@ -1038,7 +1038,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let bucket_name = "sctys";
         let folder_name = Path::new("data/test_folder/");
@@ -1056,7 +1056,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let local_folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
@@ -1080,7 +1080,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let local_folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
@@ -1108,7 +1108,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let local_folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let local_file = "test_aws.parquet";
@@ -1134,7 +1134,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let local_folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let local_file = "test_scrape.html";

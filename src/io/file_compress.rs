@@ -153,7 +153,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_compress = FileCompress::new(&project_logger);
         let compressed_file_name = "test_scrape.tar.bz2".to_string();
         let mut compressor = file_compress.get_bz2_compressor(&folder_path, &compressed_file_name);
@@ -174,7 +174,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let file_compress = FileCompress::new(&project_logger);
         let compressed_file_name = "test_browse_folder.tar.bz2".to_string();
         let mut compressor = file_compress.get_bz2_compressor(&folder_path, &compressed_file_name);

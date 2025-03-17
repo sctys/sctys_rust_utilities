@@ -1,6 +1,7 @@
 extern crate byte_unit;
 
 use std::path::{Path, PathBuf};
+use std::sync::Once;
 
 use log::LevelFilter;
 use log::{debug, error, info, trace, warn};
@@ -16,10 +17,12 @@ use log4rs::append::rolling_file::RollingFileAppender;
 use log4rs::encode::pattern::PatternEncoder;
 
 use log4rs::config::{Appender, Logger, Root};
-use log4rs::{Config, Handle};
+use log4rs::Config;
 
 const DEFAULT_MAX_FILE_SIZE_MB: u128 = 10;
 const DEFAULT_ROLLER_COUNT: u32 = 10;
+
+static INIT_LOGGER: Once = Once::new();
 
 #[derive(Debug)]
 pub struct ProjectLogger {
@@ -54,7 +57,7 @@ impl ProjectLogger {
         }
     }
 
-    pub fn set_logger(&self, logger_level: LevelFilter) -> Handle {
+    pub fn set_logger(&self, logger_level: LevelFilter) {
         let log_line_pattern = "{d(%Y-%m-%d %H:%M:%S)} | {h({l}):5.5} | {t} - {m}{n}";
 
         let trigger_size = byte_unit::n_mb_bytes!(self.max_file_size_mb) as u64;
@@ -110,12 +113,17 @@ impl ProjectLogger {
                     .build(&self.error_logger_name, LevelFilter::Error),
             )
             .build(Root::builder().appender("stdout_ap").build(logger_level))
-            .unwrap_or_else(|_| {
-                panic!("Error in configuration of logger for {}", self.logger_name)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Error in configuration of logger for {}. {e}",
+                    self.logger_name
+                )
             });
-
-        log4rs::init_config(config)
-            .unwrap_or_else(|_| panic!("Error in init_config for {}", self.logger_name))
+        INIT_LOGGER.call_once(|| {
+            log4rs::init_config(config).unwrap_or_else(|e| {
+                panic!("Error in initializing logger for {}. {e}", self.logger_name);
+            });
+        });
     }
 
     pub fn log_trace(&self, message: &str) {
@@ -170,7 +178,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_rust_utilities");
         let logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = logger.set_logger(LevelFilter::Debug);
+        logger.set_logger(LevelFilter::Debug);
         logger.log_trace(&format!("This is trace from {}", logger.get_logger_name()));
         logger.log_debug(&format!("This is debug from {}", logger.get_logger_name()));
         logger.log_info(&format!("This is info from {}", logger.get_logger_name()));

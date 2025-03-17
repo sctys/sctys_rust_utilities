@@ -55,7 +55,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let redis = Redis::new(&project_logger);
         let key = "oddsportal_competition_season";
         let mut conn = redis.create_connection().unwrap();
@@ -70,7 +70,7 @@ mod tests {
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        let _handle = project_logger.set_logger(LevelFilter::Debug);
+        project_logger.set_logger(LevelFilter::Debug);
         let redis = Redis::new(&project_logger);
         let key = "test";
         let mut conn = redis.create_connection().unwrap();
