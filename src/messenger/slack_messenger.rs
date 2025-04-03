@@ -17,19 +17,15 @@ const RETRY_SLEEP: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub struct SlackMessenger<'a> {
     api_token: String,
-    main_channel_id: &'a str,
-    log_channel_id: &'a str,
+    main_channel_id: String,
+    log_channel_id: String,
     logger: &'a ProjectLogger,
     num_retry: u32,
     retry_sleep: Duration,
 }
 
 impl<'a> SlackMessenger<'a> {
-    pub fn new(
-        main_channel_id: &'a str,
-        log_channel_id: &'a str,
-        logger: &'a ProjectLogger,
-    ) -> Self {
+    pub fn new(main_channel_id: String, log_channel_id: String, logger: &'a ProjectLogger) -> Self {
         let api_token = APIKey::load_apikey();
         Self {
             api_token,
@@ -43,9 +39,9 @@ impl<'a> SlackMessenger<'a> {
 
     pub fn get_channel_id(&self, log_only: bool) -> &str {
         if log_only {
-            self.log_channel_id
+            &self.log_channel_id
         } else {
-            self.main_channel_id
+            &self.main_channel_id
         }
     }
 
@@ -185,7 +181,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let calling_func = utilities_function::function_name!(true);
         slack_messenger.retry_send_message(calling_func, "Test message from rust", false);
     }

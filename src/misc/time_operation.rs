@@ -3,6 +3,7 @@ use chrono::{
     TimeZone, Timelike, Utc,
 };
 use chrono_tz::Tz;
+use mongodb::bson::DateTime as BsonDateTime;
 use rand::{thread_rng, Rng};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -170,6 +171,10 @@ pub fn date_time_to_timestamp<T: TimeZone>(
     }
 }
 
+pub fn date_time_to_int<T: TimeZone>(date_time: &DateTime<T>) -> i32 {
+    date_time.year() * 10000 + date_time.month() as i32 * 100 + date_time.day() as i32
+}
+
 pub fn utc_date_time_from_timestamp(timestamp: i64, precision: SecPrecision) -> DateTime<Utc> {
     let (secs, nsecs) = match precision {
         SecPrecision::Sec => (timestamp, 0),
@@ -244,6 +249,14 @@ pub fn date_time_timezone_from_string(date_time_str: &str, fmt: &str) -> DateTim
             panic!("Unable to parse the date time with time zone from string for {date_time_str} in {fmt}, {e}")
         })
     }
+}
+
+pub fn convert_date_time_to_bson<T: TimeZone>(date_time: &DateTime<T>) -> BsonDateTime {
+    BsonDateTime::from_millis(date_time.timestamp_millis())
+}
+
+pub fn convert_system_time_to_bson(system_time: SystemTime) -> BsonDateTime {
+    BsonDateTime::from_system_time(system_time)
 }
 
 #[cfg(test)]

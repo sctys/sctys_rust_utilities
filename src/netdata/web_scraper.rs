@@ -720,7 +720,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
         let url = Url::parse("https://tfl.gov.uk/travel-information/timetables/").unwrap();
@@ -744,7 +744,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
         let url = "14Ep-CmoqWxrMU8HshxthRcdRW8IsXvh3n2-ZHVCzqzQ/edit#gid=1855920257";
@@ -774,7 +774,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
         let url_suffix = ["bakerloo", "central", "circle", "district", "jubilee"];
@@ -828,7 +828,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
         let browse_action = extra_action;
@@ -857,7 +857,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let browse_action = extra_action;
         let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);

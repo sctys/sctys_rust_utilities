@@ -1086,7 +1086,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1123,7 +1123,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1167,7 +1167,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1211,7 +1211,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1264,7 +1264,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1317,7 +1317,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1372,7 +1372,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1428,7 +1428,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1473,7 +1473,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1521,7 +1521,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1570,7 +1570,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1628,7 +1628,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";
@@ -1686,7 +1686,7 @@ mod tests {
         let channel_config_file = "messenger_channel_id.toml";
         let channel_id = load_channel_id(&channel_config_path, channel_config_file);
         let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(&channel_id, &log_channel_id, &project_logger);
+        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
         let file_io = FileIO::new(&project_logger);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let aws_bucket = "sctys";

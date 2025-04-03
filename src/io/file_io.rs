@@ -9,7 +9,7 @@ use std::fs::{self, DirEntry};
 use std::fs::{File, ReadDir};
 use std::io::{Error, ErrorKind, Result};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::SystemTime;
 use walkdir::WalkDir;
 
@@ -53,6 +53,37 @@ impl<'a> FileIO<'a> {
         }
     }
 
+    pub fn copy_file(
+        &self,
+        source_path: &Path,
+        target_path: &Path,
+        original_name: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        let original_full_path = Path::new(source_path).join(original_name);
+        let new_full_path = Path::new(target_path).join(new_name);
+        fs::copy(original_full_path, new_full_path).map_or_else(
+            |e| {
+                let error_str = format!(
+                    "Unable to copy file from {original_name} in {} to {new_name} in {}. {e}",
+                    source_path.display(),
+                    target_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                Err(e)
+            },
+            |_| {
+                let debug_str = format!(
+                    "File {original_name} in {} copied to {new_name} in {}",
+                    source_path.display(),
+                    target_path.display()
+                );
+                self.project_logger.log_debug(&debug_str);
+                Ok(())
+            },
+        )
+    }
+
     pub fn remove_file(&self, folder_path: &Path, file: &str) -> Result<()> {
         let full_path_file = Path::new(folder_path).join(file);
         fs::remove_file(&full_path_file).map_or_else(
@@ -67,6 +98,52 @@ impl<'a> FileIO<'a> {
                 Ok(())
             },
         )
+    }
+
+    pub fn move_file(
+        &self,
+        original_folder_path: &Path,
+        new_folder_path: &Path,
+        file_name: &str,
+    ) -> Result<()> {
+        let original_full_path = Path::new(original_folder_path).join(file_name);
+        let new_full_path = Path::new(new_folder_path).join(file_name);
+        let output = Command::new("mv")
+            .arg(original_full_path)
+            .arg(new_full_path)
+            .output();
+
+        match output {
+            Ok(output) => {
+                if output.status.success() {
+                    let debug_str = format!(
+                        "File {file_name} moved from {} to {}",
+                        original_folder_path.display(),
+                        new_folder_path.display()
+                    );
+                    self.project_logger.log_debug(&debug_str);
+                    Ok(())
+                } else {
+                    let error_str = format!(
+                        "Unable to move file {file_name} from {} to {}. {}",
+                        original_folder_path.display(),
+                        new_folder_path.display(),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    self.project_logger.log_error(&error_str);
+                    Err(Error::new(ErrorKind::Other, error_str))
+                }
+            }
+            Err(e) => {
+                let error_str = format!(
+                    "Unable to move file {file_name} from {} to {}. {e}",
+                    original_folder_path.display(),
+                    new_folder_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                Err(e)
+            }
+        }
     }
 
     pub fn rename_file(
@@ -98,12 +175,13 @@ impl<'a> FileIO<'a> {
     }
 
     pub fn copy_folder(&self, source_path: &Path, destination_path: &Path) -> Result<()> {
-        let output = Command::new("rsync")
-            .arg("-a")
-            .arg("--ignore-existing")
-            .arg("--inplace")
+        let output = Command::new("gcp")
+            .arg("-rv")
+            .arg("--preserve=timestamps")
             .arg(source_path.join("").as_os_str())
             .arg(destination_path.as_os_str())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .output();
 
         match output {
@@ -118,10 +196,9 @@ impl<'a> FileIO<'a> {
                     Ok(())
                 } else {
                     let error_str = format!(
-                        "Unable to copy folder from {} to {}, {}",
+                        "Unable to copy folder from {} to {}",
                         source_path.display(),
                         destination_path.display(),
-                        String::from_utf8_lossy(&output.stderr)
                     );
                     self.project_logger.log_error(&error_str);
                     Err(Error::new(ErrorKind::Other, error_str))
@@ -135,6 +212,127 @@ impl<'a> FileIO<'a> {
                 );
                 self.project_logger.log_error(&error_str);
                 Err(e)
+            }
+        }
+    }
+
+    pub fn copy_folder_with_tar(&self, source_path: &Path, destination_path: &Path) -> Result<()> {
+        match destination_path.file_name().and_then(|module_name| {
+            module_name
+                .to_str()
+                .map(|module_name| format!("{module_name}.tar"))
+        }) {
+            Some(tar_file_name) => {
+                let source_path_parent = source_path
+                    .parent()
+                    .unwrap_or_else(|| panic!("Unable to get parent of {}", source_path.display()));
+                let tar_file_full_path = source_path_parent.join(&tar_file_name);
+                let source_path_folder = source_path.file_name().unwrap_or_else(|| {
+                    panic!("Unable to get folder name of {}", source_path.display())
+                });
+                let tar_status = Command::new("tar")
+                    .arg("-vcf")
+                    .arg(tar_file_full_path.as_os_str())
+                    .arg("-C")
+                    .arg(source_path_parent)
+                    .arg(source_path_folder)
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .status();
+
+                match tar_status {
+                    Ok(tar_status) => {
+                        if tar_status.success() {
+                            let debug_str = format!(
+                                "Tar file {} created from folder {}",
+                                tar_file_full_path.display(),
+                                source_path.display()
+                            );
+                            self.project_logger.log_debug(&debug_str);
+                            self.copy_file(
+                                source_path,
+                                destination_path,
+                                &tar_file_name,
+                                &tar_file_name,
+                            )?;
+                            let destination_path_parent =
+                                destination_path.parent().unwrap_or_else(|| {
+                                    panic!("Unable to get parent of {}", source_path.display())
+                                });
+                            let tar_destination_full_path =
+                                destination_path_parent.join(&tar_file_name);
+                            let extract_status = Command::new("tar")
+                                .arg("-xf")
+                                .arg(tar_destination_full_path.as_os_str())
+                                .arg("-C")
+                                .arg(destination_path)
+                                .stdout(Stdio::inherit())
+                                .stderr(Stdio::inherit())
+                                .status();
+
+                            match extract_status {
+                                Ok(extract_status) => {
+                                    if extract_status.success() {
+                                        let debug_str = format!(
+                                            "Tar file {} extracted to folder {}",
+                                            tar_destination_full_path.display(),
+                                            destination_path.display()
+                                        );
+                                        self.project_logger.log_debug(&debug_str);
+                                        self.remove_file(&tar_file_full_path, &tar_file_name)?;
+                                        self.remove_file(
+                                            &tar_destination_full_path,
+                                            &tar_file_name,
+                                        )?;
+                                        Ok(())
+                                    } else {
+                                        let error_str = format!(
+                                            "Unable to extract tar file {} to folder {}",
+                                            tar_destination_full_path.display(),
+                                            destination_path.display()
+                                        );
+                                        self.project_logger.log_error(&error_str);
+                                        Err(Error::new(ErrorKind::Other, error_str))
+                                    }
+                                }
+                                Err(e) => {
+                                    let error_str = format!(
+                                        "Unable to extract tar file {} to folder {}, {e}",
+                                        tar_destination_full_path.display(),
+                                        destination_path.display()
+                                    );
+                                    self.project_logger.log_error(&error_str);
+                                    Err(e)
+                                }
+                            }
+                        } else {
+                            let error_str = format!(
+                                "Unable to create tar file {} from folder {}",
+                                tar_file_full_path.display(),
+                                source_path.display()
+                            );
+                            self.project_logger.log_error(&error_str);
+                            Err(Error::new(ErrorKind::Other, error_str))
+                        }
+                    }
+                    Err(e) => {
+                        let error_str = format!(
+                            "Unable to create tar file {} from folder {}, {e}",
+                            tar_file_full_path.display(),
+                            source_path.display()
+                        );
+                        self.project_logger.log_error(&error_str);
+                        Err(e)
+                    }
+                }
+            }
+            None => {
+                let error_str = format!(
+                    "Unable to create tar file from folder {}",
+                    source_path.display()
+                );
+                self.project_logger.log_error(&error_str);
+                Err(Error::new(ErrorKind::InvalidInput, error_str))
             }
         }
     }

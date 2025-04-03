@@ -21,6 +21,7 @@ itertools = "0.10"
 log = "0.4"
 log4rs = {version = "1.2.0", features = ["gzip"]}
 polars = {version = "0.45", features = ["lazy", "temporal", "describe", "json", "parquet", "dtype-datetime", "streaming"]}
+mongodb = "3.2"
 rand = "0.8.5"
 redis = "0.25.3"
 reqwest = {version = "0.11", features = ["blocking", "json", "native-tls"]}
