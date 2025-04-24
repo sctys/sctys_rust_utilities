@@ -175,6 +175,27 @@ pub fn date_time_to_int<T: TimeZone>(date_time: &DateTime<T>) -> i32 {
     date_time.year() * 10000 + date_time.month() as i32 * 100 + date_time.day() as i32
 }
 
+pub fn parse_int_to_utc_date_time(date_int: i32) -> DateTime<Utc> {
+    let year = date_int / 10000;
+    let month = (date_int % 10000) / 100;
+    let day = date_int % 100;
+    utc_date_time(year, month as u32, day as u32, 0, 0, 0)
+}
+
+pub fn date_time_to_month<T: TimeZone>(date_time: &DateTime<T>) -> i32 {
+    date_time.year() * 100 + date_time.month() as i32
+}
+
+pub fn get_utc_start_of_the_month(date_time: &DateTime<Utc>) -> DateTime<Utc> {
+    let year = date_time.year();
+    let month = date_time.month();
+    let day = 1;
+    let hour = 0;
+    let min = 0;
+    let sec = 0;
+    utc_date_time(year, month, day, hour, min, sec)
+}
+
 pub fn utc_date_time_from_timestamp(timestamp: i64, precision: SecPrecision) -> DateTime<Utc> {
     let (secs, nsecs) = match precision {
         SecPrecision::Sec => (timestamp, 0),

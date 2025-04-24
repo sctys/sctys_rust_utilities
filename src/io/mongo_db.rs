@@ -4,8 +4,9 @@ use std::{
     process::Command,
 };
 
+use chrono::{DateTime, Utc};
 use mongodb::{
-    bson::{doc, Document},
+    bson::{doc, DateTime as BsonDateTime, Document},
     error::Result,
     Client, Collection, Cursor, Database, IndexModel,
 };
@@ -20,6 +21,7 @@ pub struct MongoDB<'a> {
 impl<'a> MongoDB<'a> {
     const DB_URL: &'static str = "mongodb://localhost:27017/";
     const ID: &'static str = "_id";
+    const MODIFIED: &'static str = "modified";
 
     pub fn new(project_logger: &'a ProjectLogger) -> Self {
         Self { project_logger }
@@ -75,18 +77,27 @@ impl<'a> MongoDB<'a> {
         collection
     }
 
+    fn parse_index_name(index_name: &str) -> &str {
+        index_name.rsplitn(2, '_').last().unwrap_or(index_name)
+    }
+
     pub async fn list_index<T: Send + Sync>(
         &self,
         collection: &Collection<T>,
     ) -> Result<Vec<String>> {
-        collection.list_index_names().await.map_err(|e| {
-            let error_str = format!(
-                "Fail to list index for collection {}. {e}",
-                collection.name()
-            );
-            self.project_logger.log_error(&error_str);
-            e
-        })
+        collection.list_index_names().await.map_or_else(
+            |e| {
+                let error_str = format!("Fail to list index. {e}");
+                self.project_logger.log_error(&error_str);
+                Err(e)
+            },
+            |index_list| {
+                Ok(index_list
+                    .iter()
+                    .map(|index| Self::parse_index_name(index).to_string())
+                    .collect())
+            },
+        )
     }
 
     pub async fn create_indexes<T: Send + Sync>(
@@ -211,7 +222,7 @@ impl<'a> MongoDB<'a> {
         &self,
         collection: &Collection<T>,
         query: Document,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         let query_str = &query.to_string();
         collection.delete_many(query).await.map_or_else(
             |e| {
@@ -219,12 +230,35 @@ impl<'a> MongoDB<'a> {
                 self.project_logger.log_error(&error_str);
                 Err(e)
             },
-            |_| {
+            |delete_result| {
                 let debug_str = format!("Documents with query {query_str} deleted.");
                 self.project_logger.log_debug(&debug_str);
-                Ok(())
+                Ok(delete_result.deleted_count)
             },
         )
+    }
+
+    pub async fn delete_documents_by_modified_date<T: Send + Sync>(
+        &self,
+        collection: &Collection<T>,
+        start_date: &DateTime<Utc>,
+        end_date: &DateTime<Utc>,
+    ) -> Result<u64> {
+        let start_date_doc = BsonDateTime::from_millis(start_date.timestamp_millis());
+        let end_date_doc = BsonDateTime::from_millis(end_date.timestamp_millis());
+        let query = doc! {Self::MODIFIED: {"$gte": start_date_doc, "$lt": end_date_doc}};
+        self.delete_documents(collection, query).await
+    }
+
+    pub async fn delete_documents_by_int_date<T: Send + Sync>(
+        &self,
+        collection: &Collection<T>,
+        start_date: i32,
+        end_date: i32,
+        date_key: &str,
+    ) -> Result<u64> {
+        let query = doc! {date_key: {"$gte": start_date, "$lt": end_date}};
+        self.delete_documents(collection, query).await
     }
 
     pub fn backup_collection(
@@ -279,6 +313,41 @@ impl<'a> MongoDB<'a> {
                 Err(Error::new(ErrorKind::Other, error_str).into())
             }
         }
+    }
+
+    pub fn backup_collection_by_modified_date(
+        &self,
+        database_name: &str,
+        collection_name: &str,
+        start_date: &DateTime<Utc>,
+        end_date: &DateTime<Utc>,
+        output_folder: &Path,
+    ) -> Result<()> {
+        let start_date_str = start_date.to_rfc3339();
+        let end_date_str = end_date.to_rfc3339();
+        let query_str = format!(
+            r#"{{ "{}": {{ "$gte": {{ "$date": "{}" }}, "$lt": {{ "$date": "{}" }} }} }}"#,
+            Self::MODIFIED,
+            start_date_str,
+            end_date_str
+        );
+        self.backup_collection(database_name, collection_name, &query_str, output_folder)
+    }
+
+    pub fn backup_collection_by_int_date(
+        &self,
+        database_name: &str,
+        collection_name: &str,
+        start_date: i32,
+        end_date: i32,
+        date_key: &str,
+        output_folder: &Path,
+    ) -> Result<()> {
+        let query_str = format!(
+            r#"{{ "{}": {{ "$gte": {}, "$lt": {} }} }}"#,
+            date_key, start_date, end_date
+        );
+        self.backup_collection(database_name, collection_name, &query_str, output_folder)
     }
 }
 

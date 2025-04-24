@@ -14,7 +14,7 @@ byte-unit = "4.0.18"
 bzip2 = "0.4"
 chrono = "0.4"
 chrono-tz = "0.8"
-duckdb = {version = "1.1", features = ["bundled"]}
+duckdb = {version = "1.2", features = ["bundled", "parquet"]}
 flate2 = "1"
 futures = "0.3"
 itertools = "0.10"
