@@ -261,10 +261,8 @@ pub fn naive_date_time_from_string(date_time_str: &str, fmt: &str) -> NaiveDateT
 }
 
 pub fn date_time_timezone_from_string(date_time_str: &str, fmt: &str) -> DateTime<FixedOffset> {
-    if date_time_str.ends_with('Z') {
-        DateTime::parse_from_rfc3339(date_time_str).unwrap_or_else(|e| {
-            panic!("Unable to parse the date time with time zone from string for {date_time_str} in rfc3399, {e}")
-        })
+    if let Ok(date_time) = DateTime::parse_from_rfc3339(date_time_str) {
+        date_time
     } else {
         DateTime::parse_from_str(date_time_str, fmt).unwrap_or_else(|e| {
             panic!("Unable to parse the date time with time zone from string for {date_time_str} in {fmt}, {e}")

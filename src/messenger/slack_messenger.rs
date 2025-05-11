@@ -1,10 +1,8 @@
-// extern crate slack;
-
 use crate::logger::ProjectLogger;
 use crate::time_operation;
-use futures::executor;
+use reqwest::blocking::Client;
 use serde::Deserialize;
-use slack_rust as slack;
+use serde_json::json;
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -25,6 +23,9 @@ pub struct SlackMessenger<'a> {
 }
 
 impl<'a> SlackMessenger<'a> {
+    const CHANNEL: &'static str = "channel";
+    const TEXT: &'static str = "text";
+    const SLACK_URL: &'static str = "https://slack.com/api/chat.postMessage";
     pub fn new(main_channel_id: String, log_channel_id: String, logger: &'a ProjectLogger) -> Self {
         let api_token = APIKey::load_apikey();
         Self {
@@ -53,53 +54,82 @@ impl<'a> SlackMessenger<'a> {
         self.retry_sleep = retry_sleep;
     }
 
+    // pub fn retry_send_message(&self, calling_func: &str, message: &str, log_only: bool) {
+    //     let channel_id = self.get_channel_id(log_only);
+    //     // let client = match slack::api::requests::default_client() {
+    //     //     Ok(c) => c,
+    //     //     Err(e) => panic!("Unable to login for slack, {e}"),
+    //     // };
+    //     let client = slack::http_client::default_client();
+    //     let full_message = format!("Message sending from {}: {}", calling_func, message);
+    //     // let request = slack::api::chat::PostMessageRequest {
+    //     //     channel: channel_id,
+    //     //     text: &full_message,
+    //     //     ..Default::default()
+    //     // };
+    //     let request = slack::chat::post_message::PostMessageRequest {
+    //         channel: channel_id.to_string(),
+    //         text: Some(full_message),
+    //         ..Default::default()
+    //     };
+    //     let mut counter: u32 = 1;
+    //     let mut message_sent = false;
+    //     while (counter <= self.num_retry) & !message_sent {
+    //         // match slack::api::chat::post_message(&client, &self.api_token, &request) {
+    //         //     Ok(_) => message_sent = true,
+    //         //     Err(e) => {
+    //         //         self.logger.log_error(&format!(
+    //         //             "Error in sending message after trial {counter}, {e}"
+    //         //         ));
+    //         //         counter += 1;
+    //         //         time_operation::sleep(self.retry_sleep)
+    //         //     }
+    //         // }
+    //         match executor::block_on(slack::chat::post_message::post_message(
+    //             &client,
+    //             &request,
+    //             &self.api_token,
+    //         )) {
+    //             Ok(_) => message_sent = true,
+    //             Err(e) => match e {
+    //                 slack::error::Error::SerdeJsonError(_) => message_sent = true,
+    //                 _ => {
+    //                     self.logger.log_error(&format!(
+    //                         "Error in sending message after trial {counter}, {e}"
+    //                     ));
+    //                     counter += 1;
+    //                     time_operation::sleep(self.retry_sleep)
+    //                 }
+    //             },
+    //         }
+    //     }
+    // }
+
     pub fn retry_send_message(&self, calling_func: &str, message: &str, log_only: bool) {
         let channel_id = self.get_channel_id(log_only);
-        // let client = match slack::api::requests::default_client() {
-        //     Ok(c) => c,
-        //     Err(e) => panic!("Unable to login for slack, {e}"),
-        // };
-        let client = slack::http_client::default_client();
+        let client = Client::new();
         let full_message = format!("Message sending from {}: {}", calling_func, message);
-        // let request = slack::api::chat::PostMessageRequest {
-        //     channel: channel_id,
-        //     text: &full_message,
-        //     ..Default::default()
-        // };
-        let request = slack::chat::post_message::PostMessageRequest {
-            channel: channel_id.to_string(),
-            text: Some(full_message),
-            ..Default::default()
-        };
+        let request = json!({
+            Self::CHANNEL: channel_id,
+            Self::TEXT: Some(full_message),
+        });
         let mut counter: u32 = 1;
         let mut message_sent = false;
         while (counter <= self.num_retry) & !message_sent {
-            // match slack::api::chat::post_message(&client, &self.api_token, &request) {
-            //     Ok(_) => message_sent = true,
-            //     Err(e) => {
-            //         self.logger.log_error(&format!(
-            //             "Error in sending message after trial {counter}, {e}"
-            //         ));
-            //         counter += 1;
-            //         time_operation::sleep(self.retry_sleep)
-            //     }
-            // }
-            match executor::block_on(slack::chat::post_message::post_message(
-                &client,
-                &request,
-                &self.api_token,
-            )) {
+            match client
+                .post(Self::SLACK_URL)
+                .bearer_auth(&self.api_token)
+                .json(&request)
+                .send()
+            {
                 Ok(_) => message_sent = true,
-                Err(e) => match e {
-                    slack::error::Error::SerdeJsonError(_) => message_sent = true,
-                    _ => {
-                        self.logger.log_error(&format!(
-                            "Error in sending message after trial {counter}, {e}"
-                        ));
-                        counter += 1;
-                        time_operation::sleep(self.retry_sleep)
-                    }
-                },
+                Err(e) => {
+                    self.logger.log_error(&format!(
+                        "Error in sending message after trial {counter}, {e}"
+                    ));
+                    counter += 1;
+                    time_operation::sleep(self.retry_sleep)
+                }
             }
         }
     }

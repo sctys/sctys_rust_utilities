@@ -1,16 +1,21 @@
 use crate::logger::ProjectLogger;
 use crate::time_operation;
 use crate::time_operation::SecPrecision;
-use aws_sdk_s3::error::{
-    CompleteMultipartUploadError, CreateMultipartUploadError, GetObjectError, ListObjectsV2Error,
-    PutObjectError, UploadPartError,
+use aws_config::BehaviorVersion;
+use aws_sdk_s3::config::http::HttpResponse;
+use aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Output;
+use aws_sdk_s3::operation::{
+    complete_multipart_upload::CompleteMultipartUploadError,
+    create_multipart_upload::CreateMultipartUploadError, get_object::GetObjectError,
+    list_objects_v2::ListObjectsV2Error, put_object::PutObjectError, upload_part::UploadPartError,
 };
-use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart, Object};
-use aws_sdk_s3::output::ListObjectsV2Output;
-use aws_sdk_s3::types::ByteStream;
-use aws_sdk_s3::{Client, Credentials, Region};
-use aws_smithy_http::body::SdkBody;
-use aws_smithy_http::result::SdkError;
+use aws_sdk_s3::primitives::{ByteStream, ByteStreamError, SdkBody};
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Object};
+use aws_sdk_s3::{
+    config::{Credentials, Region},
+    Client,
+};
+use aws_smithy_runtime_api::client::result::SdkError;
 use chrono::{DateTime, TimeZone};
 use polars::error::PolarsError;
 use polars::frame::DataFrame;
@@ -48,7 +53,7 @@ impl<'a> AWSFileIO<'a> {
             "s3_access",
         );
         let region = Region::new(api_key.aws_api_region.clone());
-        let config = aws_config::from_env()
+        let config = aws_config::defaults(BehaviorVersion::latest())
             .credentials_provider(credentials)
             .region(region)
             .load()
@@ -113,7 +118,7 @@ impl<'a> AWSFileIO<'a> {
         &self,
         bucket_name: &str,
         folder_name: &Path,
-    ) -> Result<(), SdkError<PutObjectError>> {
+    ) -> Result<(), SdkError<PutObjectError, HttpResponse>> {
         if !self.check_folder_exist(bucket_name, folder_name).await {
             self.client
                 .put_object()
@@ -153,7 +158,7 @@ impl<'a> AWSFileIO<'a> {
         &self,
         bucket_name: &str,
         folder_name: &Path,
-    ) -> Result<Vec<ListObjectsV2Output>, SdkError<ListObjectsV2Error>> {
+    ) -> Result<Vec<ListObjectsV2Output>, SdkError<ListObjectsV2Error, HttpResponse>> {
         let mut object_output_list = Vec::new();
         let mut is_last_page = false;
         let mut continuation_token = None;
@@ -170,7 +175,10 @@ impl<'a> AWSFileIO<'a> {
             {
                 Ok(object_list) => {
                     continuation_token = object_list.next_continuation_token().map(str::to_string);
-                    if !object_list.is_truncated() {
+                    if object_list
+                        .is_truncated()
+                        .is_none_or(|is_truncated| !is_truncated)
+                    {
                         is_last_page = true;
                     }
                     object_output_list.push(object_list);
@@ -196,9 +204,7 @@ impl<'a> AWSFileIO<'a> {
         let cutoff_timestamp =
             time_operation::date_time_to_timestamp(cutoff_date_time, SecPrecision::Sec);
         let last_modified_time = element.last_modified();
-        last_modified_time.map_or(false, |last_modified| {
-            last_modified.secs() >= cutoff_timestamp
-        })
+        last_modified_time.is_some_and(|last_modified| last_modified.secs() >= cutoff_timestamp)
     }
 
     pub fn filter_element_between<T: TimeZone>(
@@ -212,7 +218,7 @@ impl<'a> AWSFileIO<'a> {
         let cutoff_timestamp_late =
             time_operation::date_time_to_timestamp(cutoff_date_time_late, SecPrecision::Sec);
         let last_modified_time = element.last_modified();
-        last_modified_time.map_or(false, |last_modified| {
+        last_modified_time.is_some_and(|last_modified| {
             last_modified.secs() >= cutoff_timestamp_early
                 && last_modified.secs() < cutoff_timestamp_late
         })
@@ -266,7 +272,7 @@ impl<'a> AWSFileIO<'a> {
         folder_path: &Path,
         file: &str,
         content: &str,
-    ) -> Result<(), SdkError<PutObjectError>> {
+    ) -> Result<(), SdkError<PutObjectError, HttpResponse>> {
         let full_path = folder_path.join(file);
         let content_byte = ByteStream::new(SdkBody::from(content));
         self.client
@@ -630,11 +636,14 @@ impl<'a> AWSFileIO<'a> {
                         || {
                             let error_str = "No upload ID is generated from the multipart upload.";
                             self.project_logger.log_error(error_str);
-                            Err(AWSWriteFileError::CreateMultipartUploadError(
-                                SdkError::<CreateMultipartUploadError>::construction_failure(
-                                    error_str,
-                                ),
-                            ))
+                            Err(
+                                AWSWriteFileError::CreateMultipartUploadError(SdkError::<
+                                    CreateMultipartUploadError,
+                                    HttpResponse,
+                                >::construction_failure(
+                                    error_str
+                                )),
+                            )
                         },
                         |response| Ok(response.to_string()),
                     )
@@ -777,20 +786,20 @@ impl<'a> AWSFileIO<'a> {
 
 #[derive(Debug)]
 pub enum AWSLoadFileError {
-    SdkError(SdkError<GetObjectError>),
-    ByteStreamError(aws_smithy_http::byte_stream::error::Error),
+    SdkError(SdkError<GetObjectError, HttpResponse>),
+    ByteStreamError(ByteStreamError),
     PolarsError(PolarsError),
     IOError(std::io::Error),
 }
 
-impl From<SdkError<GetObjectError>> for AWSLoadFileError {
-    fn from(err: SdkError<GetObjectError>) -> Self {
+impl From<SdkError<GetObjectError, HttpResponse>> for AWSLoadFileError {
+    fn from(err: SdkError<GetObjectError, HttpResponse>) -> Self {
         AWSLoadFileError::SdkError(err)
     }
 }
 
-impl From<aws_smithy_http::byte_stream::error::Error> for AWSLoadFileError {
-    fn from(err: aws_smithy_http::byte_stream::error::Error) -> Self {
+impl From<ByteStreamError> for AWSLoadFileError {
+    fn from(err: ByteStreamError) -> Self {
         AWSLoadFileError::ByteStreamError(err)
     }
 }
@@ -809,16 +818,16 @@ impl From<std::io::Error> for AWSLoadFileError {
 
 #[derive(Debug)]
 pub enum AWSWriteFileError {
-    SdkError(SdkError<PutObjectError>),
+    SdkError(SdkError<PutObjectError, HttpResponse>),
     PolarsError(PolarsError),
     IOError(std::io::Error),
-    CreateMultipartUploadError(SdkError<CreateMultipartUploadError>),
-    UploadPartError(SdkError<UploadPartError>),
-    CompleteMultipartUploadError(SdkError<CompleteMultipartUploadError>),
+    CreateMultipartUploadError(SdkError<CreateMultipartUploadError, HttpResponse>),
+    UploadPartError(SdkError<UploadPartError, HttpResponse>),
+    CompleteMultipartUploadError(SdkError<CompleteMultipartUploadError, HttpResponse>),
 }
 
-impl From<SdkError<PutObjectError>> for AWSWriteFileError {
-    fn from(err: SdkError<PutObjectError>) -> Self {
+impl From<SdkError<PutObjectError, HttpResponse>> for AWSWriteFileError {
+    fn from(err: SdkError<PutObjectError, HttpResponse>) -> Self {
         AWSWriteFileError::SdkError(err)
     }
 }
@@ -835,20 +844,20 @@ impl From<std::io::Error> for AWSWriteFileError {
     }
 }
 
-impl From<SdkError<CreateMultipartUploadError>> for AWSWriteFileError {
-    fn from(err: SdkError<CreateMultipartUploadError>) -> Self {
+impl From<SdkError<CreateMultipartUploadError, HttpResponse>> for AWSWriteFileError {
+    fn from(err: SdkError<CreateMultipartUploadError, HttpResponse>) -> Self {
         AWSWriteFileError::CreateMultipartUploadError(err)
     }
 }
 
-impl From<SdkError<UploadPartError>> for AWSWriteFileError {
-    fn from(err: SdkError<UploadPartError>) -> Self {
+impl From<SdkError<UploadPartError, HttpResponse>> for AWSWriteFileError {
+    fn from(err: SdkError<UploadPartError, HttpResponse>) -> Self {
         AWSWriteFileError::UploadPartError(err)
     }
 }
 
-impl From<SdkError<CompleteMultipartUploadError>> for AWSWriteFileError {
-    fn from(err: SdkError<CompleteMultipartUploadError>) -> Self {
+impl From<SdkError<CompleteMultipartUploadError, HttpResponse>> for AWSWriteFileError {
+    fn from(err: SdkError<CompleteMultipartUploadError, HttpResponse>) -> Self {
         AWSWriteFileError::CompleteMultipartUploadError(err)
     }
 }
@@ -985,7 +994,7 @@ mod tests {
             .get_elements_in_folder(bucket_name, folder_name)
             .await
             .unwrap();
-        println!("{:?}", elements[elements.len() - 1].contents().unwrap());
+        println!("{:?}", elements[elements.len() - 1].contents());
     }
 
     #[tokio::test]

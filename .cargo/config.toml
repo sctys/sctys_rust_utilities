@@ -1,0 +1,2 @@
+[env]
+PYTHON_SYS_EXECUTABLE = "/home/sctys/anaconda3/envs/netdata_rust/bin/python"

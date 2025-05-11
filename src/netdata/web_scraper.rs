@@ -6,8 +6,8 @@ use std::io::Cursor;
 use std::path::Path;
 use std::process::{Child, Command};
 use std::time::Duration;
-use thirtyfour_sync::error::WebDriverResult;
-use thirtyfour_sync::{ChromeCapabilities, WebDriver, WebDriverCommands};
+// use thirtyfour_sync::error::WebDriverResult;
+// use thirtyfour_sync::{ChromeCapabilities, WebDriver, WebDriverCommands};
 use tqdm;
 
 use super::data_struct::{BrowseSetting, RequestSetting, ResponseCheckResult, UrlFile};
@@ -27,8 +27,8 @@ pub struct WebScraper<'a> {
     timeout: Duration,
     web_driver_port: u32,
     client: Option<Client>,
-    web_driver: Option<WebDriver>,
-    browser: Option<ChromeCapabilities>,
+    // web_driver: Option<WebDriver>,
+    // browser: Option<ChromeCapabilities>,
     chrome_process: Option<Child>,
 }
 
@@ -59,8 +59,8 @@ impl<'a> WebScraper<'a> {
             timeout: Self::TIMEOUT,
             web_driver_port: Self::WEB_DRIVER_PORT,
             client: None,
-            web_driver: None,
-            browser: None,
+            // web_driver: None,
+            // browser: None,
             chrome_process: None,
         }
     }
@@ -89,9 +89,9 @@ impl<'a> WebScraper<'a> {
         self.client = Some(client);
     }
 
-    pub fn set_browser(&mut self, browser: ChromeCapabilities) {
-        self.browser = Some(browser);
-    }
+    // pub fn set_browser(&mut self, browser: ChromeCapabilities) {
+    //     self.browser = Some(browser);
+    // }
 
     pub fn get_default_blocking_client(&mut self) -> Client {
         let mut counter = 0;
@@ -117,30 +117,30 @@ impl<'a> WebScraper<'a> {
         panic!("{}", &error_str);
     }
 
-    pub fn get_default_browser(&mut self) -> ChromeCapabilities {
-        let mut browser = ChromeCapabilities::new();
-        if let Err(e) = browser.set_headless() {
-            let error_str = format!("Unable to set headless for the chrome browser, {e}");
-            self.project_logger.log_error(&error_str);
-            panic!("{}", &error_str);
-        };
-        for arg in [
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--window-size=1920,1080",
-            "disable-blink-features=AutomationControlled",
-        ]
-        .iter()
-        {
-            if let Err(e) = browser.add_chrome_arg(arg) {
-                let error_str = format!("Unable to set the argument {arg}, {e}");
-                self.project_logger.log_error(&error_str);
-                panic!("{}", &error_str);
-            };
-        }
-        self.browser = Some(browser.clone());
-        browser
-    }
+    // pub fn get_default_browser(&mut self) -> ChromeCapabilities {
+    //     let mut browser = ChromeCapabilities::new();
+    //     if let Err(e) = browser.set_headless() {
+    //         let error_str = format!("Unable to set headless for the chrome browser, {e}");
+    //         self.project_logger.log_error(&error_str);
+    //         panic!("{}", &error_str);
+    //     };
+    //     for arg in [
+    //         "--disable-dev-shm-usage",
+    //         "--disable-gpu",
+    //         "--window-size=1920,1080",
+    //         "disable-blink-features=AutomationControlled",
+    //     ]
+    //     .iter()
+    //     {
+    //         if let Err(e) = browser.add_chrome_arg(arg) {
+    //             let error_str = format!("Unable to set the argument {arg}, {e}");
+    //             self.project_logger.log_error(&error_str);
+    //             panic!("{}", &error_str);
+    //         };
+    //     }
+    //     self.browser = Some(browser.clone());
+    //     browser
+    // }
 
     pub fn turn_on_chrome_process(&mut self) {
         if self.chrome_process.is_none() {
@@ -186,58 +186,58 @@ impl<'a> WebScraper<'a> {
         format!("{}{}", &Self::WEB_DRIVER_PROG, self.web_driver_port)
     }
 
-    pub fn set_web_driver(&mut self) {
-        let server_url = self.web_driver_path();
-        if self.browser.is_none() {
-            self.get_default_browser();
-        }
-        match WebDriver::new_with_timeout(&server_url, &self.browser, Some(self.timeout)) {
-            Ok(w_d) => self.web_driver = Some(w_d),
-            Err(e) => {
-                let error_str = format!("Unable to set the web driver. {e}");
-                self.project_logger.log_error(&error_str);
-                panic!("{}", &error_str);
-            }
-        }
-    }
+    // pub fn set_web_driver(&mut self) {
+    //     let server_url = self.web_driver_path();
+    //     if self.browser.is_none() {
+    //         self.get_default_browser();
+    //     }
+    //     match WebDriver::new_with_timeout(&server_url, &self.browser, Some(self.timeout)) {
+    //         Ok(w_d) => self.web_driver = Some(w_d),
+    //         Err(e) => {
+    //             let error_str = format!("Unable to set the web driver. {e}");
+    //             self.project_logger.log_error(&error_str);
+    //             panic!("{}", &error_str);
+    //         }
+    //     }
+    // }
 
-    pub fn get_web_driver(&mut self) -> Option<&mut WebDriver> {
-        self.web_driver.as_mut()
-    }
+    // pub fn get_web_driver(&mut self) -> Option<&mut WebDriver> {
+    //     self.web_driver.as_mut()
+    // }
 
-    pub fn restart_web_driver(&mut self) {
-        if let Some(w_d) = &self.web_driver {
-            match w_d.close() {
-                Ok(()) => self.set_web_driver(),
-                Err(e) => {
-                    let error_str = format!(
-                        "Unable to quit web driver. Please check and clear the process. {e}"
-                    );
-                    self.project_logger.log_error(&error_str);
-                    panic! {"{}", &error_str};
-                }
-            }
-        }
-    }
+    // pub fn restart_web_driver(&mut self) {
+    //     if let Some(w_d) = &self.web_driver {
+    //         match w_d.close() {
+    //             Ok(()) => self.set_web_driver(),
+    //             Err(e) => {
+    //                 let error_str = format!(
+    //                     "Unable to quit web driver. Please check and clear the process. {e}"
+    //                 );
+    //                 self.project_logger.log_error(&error_str);
+    //                 panic! {"{}", &error_str};
+    //             }
+    //         }
+    //     }
+    // }
 
-    pub fn close_web_driver(&mut self) {
-        let web_driver = self.web_driver.take();
-        if let Some(w_d) = web_driver {
-            match w_d.quit() {
-                Ok(()) => {
-                    let debug_str = "Web driver quitted.".to_string();
-                    self.project_logger.log_debug(&debug_str);
-                }
-                Err(e) => {
-                    let error_str = format!(
-                        "Unable to quit web driver. Please check and clear the process. {e}"
-                    );
-                    self.project_logger.log_error(&error_str);
-                    panic! {"{}", &error_str};
-                }
-            }
-        }
-    }
+    // pub fn close_web_driver(&mut self) {
+    //     let web_driver = self.web_driver.take();
+    //     if let Some(w_d) = web_driver {
+    //         match w_d.quit() {
+    //             Ok(()) => {
+    //                 let debug_str = "Web driver quitted.".to_string();
+    //                 self.project_logger.log_debug(&debug_str);
+    //             }
+    //             Err(e) => {
+    //                 let error_str = format!(
+    //                     "Unable to quit web driver. Please check and clear the process. {e}"
+    //                 );
+    //                 self.project_logger.log_error(&error_str);
+    //                 panic! {"{}", &error_str};
+    //             }
+    //         }
+    //     }
+    // }
 
     fn get_request_simple(&mut self, url: Url) -> Result<Response> {
         match &self.client {
@@ -544,128 +544,128 @@ impl<'a> WebScraper<'a> {
             .ok()
     }
 
-    #[allow(clippy::result_large_err)]
-    pub fn browse_page(&mut self, url: &Url) -> WebDriverResult<()> {
-        match &mut self.web_driver {
-            Some(w_d) => w_d.get(url.clone()),
-            None => {
-                self.set_web_driver();
-                self.browse_page(url)
-            }
-        }
-    }
+    // #[allow(clippy::result_large_err)]
+    // pub fn browse_page(&mut self, url: &Url) -> WebDriverResult<()> {
+    //     match &mut self.web_driver {
+    //         Some(w_d) => w_d.get(url.clone()),
+    //         None => {
+    //             self.set_web_driver();
+    //             self.browse_page(url)
+    //         }
+    //     }
+    // }
 
-    #[allow(clippy::result_large_err)]
-    pub fn browse_request(
-        &mut self,
-        url: &Url,
-        browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
-    ) -> WebDriverResult<String> {
-        match &mut self.web_driver {
-            Some(w_d) => {
-                w_d.get(url.clone())?;
-                browse_action(w_d)?;
-                w_d.page_source()
-            }
-            None => {
-                self.set_web_driver();
-                self.browse_request(url, browse_action)
-            }
-        }
-    }
+    // #[allow(clippy::result_large_err)]
+    // pub fn browse_request(
+    //     &mut self,
+    //     url: &Url,
+    //     browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
+    // ) -> WebDriverResult<String> {
+    //     match &mut self.web_driver {
+    //         Some(w_d) => {
+    //             w_d.get(url.clone())?;
+    //             browse_action(w_d)?;
+    //             w_d.page_source()
+    //         }
+    //         None => {
+    //             self.set_web_driver();
+    //             self.browse_request(url, browse_action)
+    //         }
+    //     }
+    // }
 
-    pub fn retry_browse_request(
-        &mut self,
-        url: &Url,
-        browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
-        check_func: fn(&str) -> ResponseCheckResult,
-    ) -> ResponseCheckResult {
-        let mut counter = 0;
-        while counter < self.num_retry {
-            match self.browse_request(url, browse_action) {
-                Ok(r) => {
-                    match check_func(&r) {
-                        ResponseCheckResult::Ok(r) => {
-                            let debug_str = format!("Request {} browsed.", url.as_str());
-                            self.project_logger.log_debug(&debug_str);
-                            return ResponseCheckResult::Ok(r);
-                        }
-                        ResponseCheckResult::ErrContinue(e) => {
-                            counter += 1;
-                            let warn_str = format!("Checking for the response failed for {} after trial {counter}. {e}", url.as_str());
-                            self.project_logger.log_warn(&warn_str);
-                            time_operation::sleep(self.retry_sleep);
-                        }
-                        ResponseCheckResult::ErrTerminate(e) => {
-                            let error_str =
-                                format!("Terminate to load the page {}. {e}", url.as_str());
-                            self.project_logger.log_error(&error_str);
-                            return ResponseCheckResult::ErrTerminate(e);
-                        }
-                    };
-                }
-                Err(e) => {
-                    counter += 1;
-                    let warn_str = format!(
-                        "Unable to browse the page {} after trial {counter}. {e}",
-                        url.as_str()
-                    );
-                    self.project_logger.log_warn(&warn_str);
-                    time_operation::sleep(self.retry_sleep);
-                }
-            }
-        }
-        let error_str = format!("Fail to browse the page {}.", url.as_str());
-        self.project_logger.log_error(&error_str);
-        ResponseCheckResult::ErrTerminate(error_str)
-    }
+    // pub fn retry_browse_request(
+    //     &mut self,
+    //     url: &Url,
+    //     browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
+    //     check_func: fn(&str) -> ResponseCheckResult,
+    // ) -> ResponseCheckResult {
+    //     let mut counter = 0;
+    //     while counter < self.num_retry {
+    //         match self.browse_request(url, browse_action) {
+    //             Ok(r) => {
+    //                 match check_func(&r) {
+    //                     ResponseCheckResult::Ok(r) => {
+    //                         let debug_str = format!("Request {} browsed.", url.as_str());
+    //                         self.project_logger.log_debug(&debug_str);
+    //                         return ResponseCheckResult::Ok(r);
+    //                     }
+    //                     ResponseCheckResult::ErrContinue(e) => {
+    //                         counter += 1;
+    //                         let warn_str = format!("Checking for the response failed for {} after trial {counter}. {e}", url.as_str());
+    //                         self.project_logger.log_warn(&warn_str);
+    //                         time_operation::sleep(self.retry_sleep);
+    //                     }
+    //                     ResponseCheckResult::ErrTerminate(e) => {
+    //                         let error_str =
+    //                             format!("Terminate to load the page {}. {e}", url.as_str());
+    //                         self.project_logger.log_error(&error_str);
+    //                         return ResponseCheckResult::ErrTerminate(e);
+    //                     }
+    //                 };
+    //             }
+    //             Err(e) => {
+    //                 counter += 1;
+    //                 let warn_str = format!(
+    //                     "Unable to browse the page {} after trial {counter}. {e}",
+    //                     url.as_str()
+    //                 );
+    //                 self.project_logger.log_warn(&warn_str);
+    //                 time_operation::sleep(self.retry_sleep);
+    //             }
+    //         }
+    //     }
+    //     let error_str = format!("Fail to browse the page {}.", url.as_str());
+    //     self.project_logger.log_error(&error_str);
+    //     ResponseCheckResult::ErrTerminate(error_str)
+    // }
 
-    pub fn multiple_browse_requests(
-        &mut self,
-        url_file_list: &'a [UrlFile],
-        folder_path: &Path,
-        browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
-        check_func: fn(&str) -> ResponseCheckResult,
-        browse_setting: BrowseSetting,
-    ) -> Vec<UrlFile> {
-        let mut fail_list = Vec::new();
-        for url_file in tqdm::tqdm(url_file_list.iter()) {
-            if let ResponseCheckResult::Ok(content) =
-                self.retry_browse_request(&url_file.url, browse_action, check_func)
-            {
-                self.save_request_content(folder_path, &url_file.file_name, &content);
-            } else {
-                fail_list.push(url_file.clone())
-            }
-            time_operation::random_sleep(self.consecutive_sleep);
-            if browse_setting.restart_web_driver {
-                self.restart_web_driver();
-            }
-        }
-        if !fail_list.is_empty() {
-            let fail_url_list = format!(
-                "The following urls were not browsed successfully:\n\n {}",
-                fail_list
-                    .iter()
-                    .map(|x| x.url.as_str())
-                    .collect::<Vec<&str>>()
-                    .join("\n")
-            );
-            self.project_logger.log_error(&fail_url_list);
-            let fail_url_message = format!(
-                "The urls starting with {:?} has {} out of {} fail urls.",
-                fail_list.first(),
-                fail_list.len(),
-                url_file_list.len()
-            );
-            self.slack_messenger.retry_send_message(
-                browse_setting.calling_func,
-                &fail_url_message,
-                browse_setting.log_only,
-            );
-        }
-        fail_list
-    }
+    // pub fn multiple_browse_requests(
+    //     &mut self,
+    //     url_file_list: &'a [UrlFile],
+    //     folder_path: &Path,
+    //     browse_action: fn(&mut WebDriver) -> WebDriverResult<()>,
+    //     check_func: fn(&str) -> ResponseCheckResult,
+    //     browse_setting: BrowseSetting,
+    // ) -> Vec<UrlFile> {
+    //     let mut fail_list = Vec::new();
+    //     for url_file in tqdm::tqdm(url_file_list.iter()) {
+    //         if let ResponseCheckResult::Ok(content) =
+    //             self.retry_browse_request(&url_file.url, browse_action, check_func)
+    //         {
+    //             self.save_request_content(folder_path, &url_file.file_name, &content);
+    //         } else {
+    //             fail_list.push(url_file.clone())
+    //         }
+    //         time_operation::random_sleep(self.consecutive_sleep);
+    //         if browse_setting.restart_web_driver {
+    //             self.restart_web_driver();
+    //         }
+    //     }
+    //     if !fail_list.is_empty() {
+    //         let fail_url_list = format!(
+    //             "The following urls were not browsed successfully:\n\n {}",
+    //             fail_list
+    //                 .iter()
+    //                 .map(|x| x.url.as_str())
+    //                 .collect::<Vec<&str>>()
+    //                 .join("\n")
+    //         );
+    //         self.project_logger.log_error(&fail_url_list);
+    //         let fail_url_message = format!(
+    //             "The urls starting with {:?} has {} out of {} fail urls.",
+    //             fail_list.first(),
+    //             fail_list.len(),
+    //             url_file_list.len()
+    //         );
+    //         self.slack_messenger.retry_send_message(
+    //             browse_setting.calling_func,
+    //             &fail_url_message,
+    //             browse_setting.log_only,
+    //         );
+    //     }
+    //     fail_list
+    // }
 }
 
 #[cfg(test)]
@@ -678,8 +678,8 @@ mod tests {
     use std::env;
     use std::fs;
     use std::path::Path;
-    use thirtyfour_sync::prelude::ElementWaitable;
-    use thirtyfour_sync::By;
+    // use thirtyfour_sync::prelude::ElementWaitable;
+    // use thirtyfour_sync::By;
     use toml;
 
     #[derive(Deserialize)]
@@ -804,89 +804,89 @@ mod tests {
     const WAIT_TIME: Duration = Duration::from_secs(5);
     const ELEMENT_CSS: &str = "div#matchList.matchList";
 
-    #[allow(clippy::result_large_err)]
-    fn extra_action(web_driver: &mut WebDriver) -> WebDriverResult<()> {
-        web_driver.set_implicit_wait_timeout(WAIT_TIME)?;
-        web_driver
-            .find_element(By::Css(ELEMENT_CSS))?
-            .wait_until()
-            .displayed()?;
-        Ok(())
-    }
+    // #[allow(clippy::result_large_err)]
+    // fn extra_action(web_driver: &mut WebDriver) -> WebDriverResult<()> {
+    //     web_driver.set_implicit_wait_timeout(WAIT_TIME)?;
+    //     web_driver
+    //         .find_element(By::Css(ELEMENT_CSS))?
+    //         .wait_until()
+    //         .displayed()?;
+    //     Ok(())
+    // }
 
-    #[test]
-    fn test_simple_browsing() {
-        let logger_name = "test_simple_browsing";
-        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
-            .join("Log")
-            .join("log_sctys_netdata");
-        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        project_logger.set_logger(LevelFilter::Debug);
-        let channel_config_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
-            .join("Config")
-            .join("config_sctys_rust_utilities");
-        let channel_config_file = "messenger_channel_id.toml";
-        let channel_id = load_channel_id(&channel_config_path, channel_config_file);
-        let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
-        let file_io = FileIO::new(&project_logger);
-        let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
-        let browse_action = extra_action;
-        let url = Url::parse("https://www.nowgoal.com/").unwrap();
-        web_scraper.turn_on_chrome_process();
-        let content =
-            web_scraper.retry_browse_request(&url, browse_action, WebScraper::null_check_func);
-        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
-        let file = "test_browse.html";
-        web_scraper.save_request_content(&folder_path, file, &content.get_content().unwrap());
-        web_scraper.close_web_driver();
-        web_scraper.kill_chrome_process();
-    }
+    // #[test]
+    // fn test_simple_browsing() {
+    //     let logger_name = "test_simple_browsing";
+    //     let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+    //         .join("Log")
+    //         .join("log_sctys_netdata");
+    //     let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+    //     project_logger.set_logger(LevelFilter::Debug);
+    //     let channel_config_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+    //         .join("Config")
+    //         .join("config_sctys_rust_utilities");
+    //     let channel_config_file = "messenger_channel_id.toml";
+    //     let channel_id = load_channel_id(&channel_config_path, channel_config_file);
+    //     let log_channel_id = channel_id.clone();
+    //     let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
+    //     let file_io = FileIO::new(&project_logger);
+    //     let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
+    //     let browse_action = extra_action;
+    //     let url = Url::parse("https://www.nowgoal.com/").unwrap();
+    //     web_scraper.turn_on_chrome_process();
+    //     let content =
+    //         web_scraper.retry_browse_request(&url, browse_action, WebScraper::null_check_func);
+    //     let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
+    //     let file = "test_browse.html";
+    //     web_scraper.save_request_content(&folder_path, file, &content.get_content().unwrap());
+    //     web_scraper.close_web_driver();
+    //     web_scraper.kill_chrome_process();
+    // }
 
-    #[test]
-    fn test_multiple_browsing() {
-        let logger_name = "test_multiple_browsing";
-        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
-            .join("Log")
-            .join("log_sctys_netdata");
-        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        project_logger.set_logger(LevelFilter::Debug);
-        let channel_config_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
-            .join("Config")
-            .join("config_sctys_rust_utilities");
-        let channel_config_file = "messenger_channel_id.toml";
-        let channel_id = load_channel_id(&channel_config_path, channel_config_file);
-        let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
-        let file_io = FileIO::new(&project_logger);
-        let browse_action = extra_action;
-        let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
-        let url_suffix = ["football/live", "football/results", "football/schedule"];
-        let url = Url::parse("https://www.nowgoal.com/").unwrap();
-        let file = "test_browse{index}.html";
-        let url_file_list = Vec::from_iter(url_suffix.iter().enumerate().map(|(i, x)| {
-            UrlFile::new(
-                url.join(x).unwrap(),
-                file.replace("{index}", &i.to_string()),
-            )
-        }));
-        let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
-        let calling_func = utilities_function::function_name!(true);
-        let browse_setting = BrowseSetting {
-            restart_web_driver: false,
-            calling_func,
-            log_only: true,
-            in_s3: false,
-        };
-        web_scraper.turn_on_chrome_process();
-        web_scraper.multiple_browse_requests(
-            &url_file_list,
-            &folder_path,
-            browse_action,
-            WebScraper::null_check_func,
-            browse_setting,
-        );
-        web_scraper.close_web_driver();
-        web_scraper.kill_chrome_process();
-    }
+    // #[test]
+    // fn test_multiple_browsing() {
+    //     let logger_name = "test_multiple_browsing";
+    //     let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+    //         .join("Log")
+    //         .join("log_sctys_netdata");
+    //     let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+    //     project_logger.set_logger(LevelFilter::Debug);
+    //     let channel_config_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+    //         .join("Config")
+    //         .join("config_sctys_rust_utilities");
+    //     let channel_config_file = "messenger_channel_id.toml";
+    //     let channel_id = load_channel_id(&channel_config_path, channel_config_file);
+    //     let log_channel_id = channel_id.clone();
+    //     let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
+    //     let file_io = FileIO::new(&project_logger);
+    //     let browse_action = extra_action;
+    //     let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
+    //     let url_suffix = ["football/live", "football/results", "football/schedule"];
+    //     let url = Url::parse("https://www.nowgoal.com/").unwrap();
+    //     let file = "test_browse{index}.html";
+    //     let url_file_list = Vec::from_iter(url_suffix.iter().enumerate().map(|(i, x)| {
+    //         UrlFile::new(
+    //             url.join(x).unwrap(),
+    //             file.replace("{index}", &i.to_string()),
+    //         )
+    //     }));
+    //     let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
+    //     let calling_func = utilities_function::function_name!(true);
+    //     let browse_setting = BrowseSetting {
+    //         restart_web_driver: false,
+    //         calling_func,
+    //         log_only: true,
+    //         in_s3: false,
+    //     };
+    //     web_scraper.turn_on_chrome_process();
+    //     web_scraper.multiple_browse_requests(
+    //         &url_file_list,
+    //         &folder_path,
+    //         browse_action,
+    //         WebScraper::null_check_func,
+    //         browse_setting,
+    //     );
+    //     web_scraper.close_web_driver();
+    //     web_scraper.kill_chrome_process();
+    // }
 }

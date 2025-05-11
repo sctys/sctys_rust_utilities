@@ -175,9 +175,9 @@ impl<'a> FileIO<'a> {
     }
 
     pub fn copy_folder(&self, source_path: &Path, destination_path: &Path) -> Result<()> {
-        let output = Command::new("gcp")
-            .arg("-rv")
-            .arg("--preserve=timestamps")
+        let output = Command::new("cp")
+            .arg("-a")
+            .arg("-v")
             .arg(source_path.join("").as_os_str())
             .arg(destination_path.as_os_str())
             .stdout(Stdio::inherit())
@@ -206,7 +206,7 @@ impl<'a> FileIO<'a> {
             }
             Err(e) => {
                 let error_str = format!(
-                    "Unable to copy folder from {} to {}, {e}",
+                    "Error in copy folder from {} to {}, {e}",
                     source_path.display(),
                     destination_path.display()
                 );
@@ -426,7 +426,7 @@ impl<'a> FileIO<'a> {
         };
         let full_path = dir_entry.path();
         self.get_last_modification_time(&full_path)
-            .map_or(false, |modified_time| {
+            .is_ok_and(|modified_time| {
                 time_operation::diff_system_time_date_time_sec(&modified_time, cutoff_date_time) > 0
             })
     }
@@ -494,7 +494,7 @@ impl<'a> FileIO<'a> {
         };
         let full_path = dir_entry.path();
         self.get_last_modification_time(&full_path)
-            .map_or(false, |modified_time| {
+            .is_ok_and(|modified_time| {
                 (time_operation::diff_system_time_date_time_sec(
                     &modified_time,
                     cutoff_date_time_early,
