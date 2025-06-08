@@ -425,7 +425,7 @@ impl ApiGateway {
         };
 
         // Send the request
-        Ok(client.execute(request).await.map_err(|e| Box::new(e))?)
+        Ok(client.execute(request).await.map_err(Box::new)?)
     }
 
     pub async fn rquest_send(
@@ -508,7 +508,7 @@ impl ApiGateway {
         };
 
         // Send the request
-        Ok(client.execute(request).await.map_err(|e| Box::new(e))?)
+        Ok(client.execute(request).await.map_err(Box::new)?)
     }
 }
 

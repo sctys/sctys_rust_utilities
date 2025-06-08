@@ -150,13 +150,6 @@ pub fn naive_date_time_to_utc(naive_date_time: &NaiveDateTime) -> DateTime<Utc> 
     Utc.from_utc_datetime(naive_date_time)
 }
 
-pub fn int_date_to_utc_datetime(date_int: i64) -> DateTime<Utc> {
-    let year = date_int / 10000;
-    let month = (date_int % 10000) / 100;
-    let day = date_int % 100;
-    utc_date_time(year as i32, month as u32, day as u32, 0, 0, 0)
-}
-
 pub fn date_time_to_timestamp<T: TimeZone>(
     date_time: &DateTime<T>,
     precision: SecPrecision,
@@ -231,13 +224,11 @@ pub fn timezone_to_utc_date_time<T: TimeZone>(date_time: &DateTime<T>) -> DateTi
     date_time.with_timezone(&Utc)
 }
 
-pub fn naive_date_time_to_timezone(naive_date_time: &NaiveDateTime, timezone: Tz) -> DateTime<Tz> {
-    match timezone.from_local_datetime(naive_date_time).earliest() {
-        Some(dt) => dt,
-        None => {
-            panic!("Unable to convert naive date time {naive_date_time} into timezone {timezone}")
-        }
-    }
+pub fn naive_date_time_to_timezone(
+    naive_date_time: &NaiveDateTime,
+    timezone: Tz,
+) -> Option<DateTime<Tz>> {
+    timezone.from_local_datetime(naive_date_time).earliest()
 }
 
 pub fn utc_date_time_to_timezone(date_time: &DateTime<Utc>, timezone: Tz) -> DateTime<Tz> {
@@ -268,6 +259,18 @@ pub fn date_time_timezone_from_string(date_time_str: &str, fmt: &str) -> DateTim
             panic!("Unable to parse the date time with time zone from string for {date_time_str} in {fmt}, {e}")
         })
     }
+}
+
+pub fn utc_date_range(start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<DateTime<Utc>> {
+    let mut dates = Vec::new();
+    let mut current = start;
+
+    while current <= end {
+        dates.push(current);
+        current += chrono::Duration::days(1);
+    }
+
+    dates
 }
 
 pub fn convert_date_time_to_bson<T: TimeZone>(date_time: &DateTime<T>) -> BsonDateTime {
@@ -308,7 +311,7 @@ mod tests {
         let int_date = 20220121;
         let (year, month, day, hour, min, sec) = (2022, 1, 21, 0, 0, 0);
         let utc_datetime = utc_date_time(year, month, day, hour, min, sec);
-        assert_eq!(int_date_to_utc_datetime(int_date), utc_datetime)
+        assert_eq!(parse_int_to_utc_date_time(int_date), utc_datetime)
     }
 
     #[test]
@@ -326,7 +329,7 @@ mod tests {
         let (year, month, day, hour, min, sec) = (2021, 10, 15, 18, 36, 44);
         let timezone = Europe::London;
         let naive_datetime = naive_date_time(year, month, day, hour, min, sec);
-        let local_datetime = naive_date_time_to_timezone(&naive_datetime, timezone);
+        let local_datetime = naive_date_time_to_timezone(&naive_datetime, timezone).unwrap();
         let utc_datetime = utc_date_time(year, month, day, hour - 1, min, sec);
         assert_eq!(timezone_to_utc_date_time(&local_datetime), utc_datetime);
     }

@@ -515,16 +515,16 @@ impl<'a> FileIO<'a> {
         let start_time_int = cutoff_date_time_early
             .format("%Y%m%d")
             .to_string()
-            .parse::<i64>()
+            .parse::<i32>()
             .unwrap_or_else(|e| {
-                panic!("Unable to parse start time {cutoff_date_time_early} into i64. {e}")
+                panic!("Unable to parse start time {cutoff_date_time_early} into i32. {e}")
             });
         let end_time_int = cutoff_date_time_late
             .format("%Y%m%d")
             .to_string()
-            .parse::<i64>()
+            .parse::<i32>()
             .unwrap_or_else(|e| {
-                panic!("Unable to parse end time {cutoff_date_time_late} into i64. {e}")
+                panic!("Unable to parse end time {cutoff_date_time_late} into i32. {e}")
             });
         let elements = self.get_elements_in_folder(folder_path)?;
         Ok(elements.filter_map(move |dir| {
@@ -535,9 +535,9 @@ impl<'a> FileIO<'a> {
                     } else {
                         file_name.to_string()
                     };
-                    file_name_date.parse::<i64>().ok().and_then(|folder_date| {
+                    file_name_date.parse::<i32>().ok().and_then(|folder_date| {
                         ((folder_date >= start_time_int) && (folder_date < end_time_int))
-                            .then_some(time_operation::int_date_to_utc_datetime(folder_date))
+                            .then_some(time_operation::parse_int_to_utc_date_time(folder_date))
                     })
                 })
             })

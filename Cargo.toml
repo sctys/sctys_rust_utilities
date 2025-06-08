@@ -16,6 +16,7 @@ byte-unit = "4.0.18"
 bzip2 = "0.4"
 chrono = "0.4"
 chrono-tz = "0.8"
+clickhouse = "0.13"
 duckdb = {version = "1.2", features = ["bundled", "parquet"]}
 flate2 = "1"
 futures = "0.3"
@@ -29,7 +30,7 @@ pyo3 = {version = "0.24.2", features = ["auto-initialize", "serde"]}
 mongodb = "3.2"
 rand = "0.8.5"
 redis = "0.25.3"
-reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"]}
+reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip"]}
 rquest = "5"
 rquest-util = "2"
 scraper = "0.14.0"

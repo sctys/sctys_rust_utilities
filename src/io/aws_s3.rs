@@ -874,7 +874,7 @@ impl APIKey {
     const API_KEY_PATH: &str = "Secret/secret_sctys_rust_utilities";
     const API_KEY_FILE: &str = "aws_s3_api.toml";
 
-    fn load_apikey() -> APIKey {
+    fn load_apikey() -> Self {
         let full_api_path =
             Path::new(&env::var(Self::PROJECT_KEY).expect("Unable to find project path"))
                 .join(Self::API_KEY_PATH)
@@ -883,7 +883,7 @@ impl APIKey {
             Ok(api_str) => api_str,
             Err(e) => panic!("Unable to load the api file. {e}"),
         };
-        let api_key_data: APIKey = match toml::from_str(&api_str) {
+        let api_key_data: Self = match toml::from_str(&api_str) {
             Ok(api_data) => api_data,
             Err(e) => panic!("Unable to parse the api file. {e}"),
         };

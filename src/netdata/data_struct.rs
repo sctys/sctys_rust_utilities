@@ -1,9 +1,18 @@
 use std::{collections::HashMap, error::Error, fmt::Display, time::Duration};
 
-use pyo3::prelude::*;
+use chrono::{DateTime, Utc};
+use pyo3::{
+    prelude::*,
+    types::{IntoPyDict, PyDict},
+};
 use reqwest::{header::HeaderMap, Url};
 
-use super::proxy::ProxyError;
+use crate::python_utils::PythonPath;
+
+use super::{
+    proxy::ProxyError,
+    python_struct::{NetdataPythonPath, PythonTxt},
+};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct UrlFile {
@@ -33,23 +42,60 @@ pub struct BrowseSetting<'a> {
 }
 
 pub enum ResponseCheckResult {
-    Ok(String),
+    ResultOk(String),
     ErrContinue(String),
     ErrTerminate(String),
 }
 
-impl ResponseCheckResult {
-    pub fn get_content(&self) -> Option<String> {
-        match self {
-            Self::Ok(content) => Some(content.to_string()),
-            _ => None,
-        }
+pub enum Scraper {
+    Reqwest(bool),
+    Rquest(bool),
+    CurlCffi,
+    Playwright(BrowseOptions),
+}
+
+pub struct ScrapeOptions {
+    pub num_retry: u8,
+    pub retry_sleep: Duration,
+    pub consecutive_sleep: (Duration, Duration),
+    pub use_proxy: bool,
+    pub scraper: Scraper,
+    pub update_domain: bool,
+}
+
+pub struct FilterOptions {
+    pub cutoff_date: Option<DateTime<Utc>>,
+    pub filter_scraped: bool,
+    pub filter_attempted: bool,
+}
+
+impl FilterOptions {
+    fn override_cutoff_date(&mut self, cutoff_date: DateTime<Utc>) {
+        self.cutoff_date = Some(cutoff_date);
     }
 
-    pub fn get_error(&self) -> Option<String> {
-        match self {
-            Self::ErrContinue(e) | Self::ErrTerminate(e) => Some(e.to_string()),
-            _ => None,
+    fn override_filter_scraped(&mut self, filter_scraped: bool) {
+        self.filter_scraped = filter_scraped;
+    }
+
+    fn override_filter_attempted(&mut self, filter_attempted: bool) {
+        self.filter_attempted = filter_attempted;
+    }
+
+    pub fn override_filter_options(
+        &mut self,
+        cutoff_date: Option<DateTime<Utc>>,
+        filter_scraped: Option<bool>,
+        filter_attempted: Option<bool>,
+    ) {
+        if let Some(cutoff_date) = cutoff_date {
+            self.override_cutoff_date(cutoff_date);
+        }
+        if let Some(filter_scraped) = filter_scraped {
+            self.override_filter_scraped(filter_scraped);
+        }
+        if let Some(filter_attempted) = filter_attempted {
+            self.override_filter_attempted(filter_attempted);
         }
     }
 }
@@ -57,7 +103,6 @@ impl ResponseCheckResult {
 pub struct RequestOptions {
     pub timeout: Duration,
     pub headers: Option<HeaderMap>,
-    pub proxy: bool,
 }
 
 impl Default for RequestOptions {
@@ -65,7 +110,6 @@ impl Default for RequestOptions {
         Self {
             timeout: RequestOptions::DEFAULT_TIMEOUT,
             headers: None,
-            proxy: true,
         }
     }
 }
@@ -81,6 +125,17 @@ impl RequestOptions {
                 .collect()
         })
     }
+
+    pub fn convert_map_to_header_map(normal_map: HashMap<&'static str, String>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (key, value) in normal_map {
+            let header_value = value
+                .parse()
+                .unwrap_or_else(|e| panic!("Unable to parse header value {value}. {e}"));
+            headers.insert(key, header_value);
+        }
+        headers
+    }
 }
 
 pub struct BrowseOptions {
@@ -94,26 +149,44 @@ pub struct Response {
     pub content: String,
     pub status_code: u16,
     pub url: String,
+    pub ok: bool,
+    pub reason: String,
 }
 
 impl Response {
     pub async fn from_reqwest_response(response: reqwest::Response) -> Result<Self, ScraperError> {
         let status_code = response.status().as_u16();
         let url = response.url().to_string();
+        let ok = response.status().is_success();
+        let reason = response
+            .status()
+            .canonical_reason()
+            .unwrap_or_default()
+            .to_string();
         Ok(Self {
             content: response.text().await?,
             status_code,
             url,
+            ok,
+            reason,
         })
     }
 
     pub async fn from_rquest_response(response: rquest::Response) -> Result<Self, ScraperError> {
         let status_code = response.status().as_u16();
         let url = response.url().to_string();
+        let ok = response.status().is_success();
+        let reason = response
+            .status()
+            .canonical_reason()
+            .unwrap_or_default()
+            .to_string();
         Ok(Self {
             content: response.text().await?,
             status_code,
             url,
+            ok,
+            reason,
         })
     }
 }
@@ -129,15 +202,82 @@ pub struct PyResponse {
 
 impl PyResponse {
     pub fn to_response(self) -> Result<Response, ScraperError> {
-        if self.ok {
-            Ok(Response {
-                content: self.content,
-                status_code: self.status_code,
-                url: self.url,
+        Ok(Response {
+            content: self.content,
+            status_code: self.status_code,
+            url: self.url,
+            ok: self.ok,
+            reason: self.reason,
+        })
+    }
+}
+
+pub struct CurlCffiClient {
+    curl_cffi_session: Py<PyAny>,
+}
+
+impl Drop for CurlCffiClient {
+    fn drop(&mut self) {
+        Python::with_gil(|py| {
+            let _ = self.curl_cffi_session.call_method1(
+                py,
+                "__exit__",
+                (py.None(), py.None(), py.None()),
+            );
+        })
+    }
+}
+
+impl CurlCffiClient {
+    const CURL_CFFI_BROWSER: (&'static str, &'static str) = ("impersonate", "chrome");
+
+    pub fn create_session() -> Result<Self, ScraperError> {
+        NetdataPythonPath::setup_python_venv();
+        Python::with_gil(|py| -> PyResult<CurlCffiClient> {
+            let requests = py.import("curl_cffi.requests")?;
+            let kwargs = [Self::CURL_CFFI_BROWSER].into_py_dict(py)?;
+            let session_obj = requests.call_method("Session", (py.None(),), Some(&kwargs))?;
+            let session = session_obj.call_method0("__enter__")?;
+            Ok(Self {
+                curl_cffi_session: session.into(),
             })
-        } else {
-            Err(ScraperError::PyScraper(self.reason))
-        }
+        })
+        .map_err(ScraperError::from)
+    }
+
+    pub fn request(
+        &self,
+        url: &str,
+        request_options: &RequestOptions,
+        proxy: Option<String>,
+    ) -> Result<PyResponse, ScraperError> {
+        Python::with_gil(|py| {
+            NetdataPythonPath::append_script_path(&py)?;
+            let request_curl_cffi = py.import(PythonTxt::RequestCurlCffi.to_string())?;
+            let kwargs = PyDict::new(py);
+            let session = &self.curl_cffi_session;
+            kwargs.set_item(
+                PythonTxt::Timeout.to_string(),
+                request_options.timeout.as_secs(),
+            )?;
+            if let Some(headers) = &request_options.convert_header_map_to_map() {
+                kwargs.set_item(PythonTxt::Headers.to_string(), headers)?;
+            } else {
+                kwargs.set_item(
+                    PythonTxt::Headers.to_string(),
+                    HashMap::<String, String>::new(),
+                )?;
+            }
+            if let Some(proxy) = proxy {
+                kwargs.set_item(PythonTxt::Proxy.to_string(), proxy)?;
+            } else {
+                kwargs.set_item(PythonTxt::Proxy.to_string(), py.None())?;
+            }
+            let response = request_curl_cffi
+                .getattr(PythonTxt::RequestsWithCurlCffi.to_string())?
+                .call((session, url), Some(&kwargs))?;
+            Ok(response.extract::<PyResponse>()?)
+        })
     }
 }
 
