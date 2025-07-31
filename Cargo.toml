@@ -28,10 +28,10 @@ playwright-rust = { path = "../playwright-rust" }
 polars = {version = "0.45", features = ["lazy", "temporal", "describe", "json", "parquet", "dtype-datetime", "streaming"]}
 pyo3 = {version = "0.24.2", features = ["auto-initialize", "serde"]}
 mongodb = "3.2"
-rand = "0.8.5"
+rand = {version = "0.8.5", features = ["std"]}
 redis = "0.25.3"
-reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip"]}
-rquest = "5"
+reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip", "cookies"]}
+rquest = {version ="5", features = ["cookies"]}
 rquest-util = "2"
 scraper = "0.14.0"
 serde = "1.0.193"

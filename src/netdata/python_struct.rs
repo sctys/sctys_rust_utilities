@@ -22,7 +22,7 @@ impl PythonPath for NetdataPythonPath {
     }
 
     fn get_script_path() -> PathBuf {
-        let current_path = env::current_dir().unwrap();
+        let current_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         current_path.join(Self::PYTHON_SCRIPT_PATH)
     }
 }

@@ -15,7 +15,8 @@ const RETRY_SLEEP: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub struct SlackMessenger<'a> {
     api_token: String,
-    main_channel_id: String,
+    error_channel_id: String,
+    report_channel_id: String,
     log_channel_id: String,
     logger: &'a ProjectLogger,
     num_retry: u32,
@@ -26,11 +27,12 @@ impl<'a> SlackMessenger<'a> {
     const CHANNEL: &'static str = "channel";
     const TEXT: &'static str = "text";
     const SLACK_URL: &'static str = "https://slack.com/api/chat.postMessage";
-    pub fn new(main_channel_id: String, log_channel_id: String, logger: &'a ProjectLogger) -> Self {
+    pub fn new(report_channel_id: String, error_channel_id: String, log_channel_id: String, logger: &'a ProjectLogger) -> Self {
         let api_token = APIKey::load_apikey();
         Self {
             api_token,
-            main_channel_id,
+            error_channel_id,
+            report_channel_id,
             log_channel_id,
             logger,
             num_retry: NUM_RETRY,
@@ -38,11 +40,11 @@ impl<'a> SlackMessenger<'a> {
         }
     }
 
-    pub fn get_channel_id(&self, log_only: bool) -> &str {
-        if log_only {
-            &self.log_channel_id
-        } else {
-            &self.main_channel_id
+    pub fn get_channel_id(&self, channel: &Channel) -> &str {
+        match channel {
+            Channel::Report => &self.report_channel_id,
+            Channel::Error => &self.error_channel_id,
+            Channel::LogOnly => &self.log_channel_id,
         }
     }
 
@@ -54,61 +56,10 @@ impl<'a> SlackMessenger<'a> {
         self.retry_sleep = retry_sleep;
     }
 
-    // pub fn retry_send_message(&self, calling_func: &str, message: &str, log_only: bool) {
-    //     let channel_id = self.get_channel_id(log_only);
-    //     // let client = match slack::api::requests::default_client() {
-    //     //     Ok(c) => c,
-    //     //     Err(e) => panic!("Unable to login for slack, {e}"),
-    //     // };
-    //     let client = slack::http_client::default_client();
-    //     let full_message = format!("Message sending from {}: {}", calling_func, message);
-    //     // let request = slack::api::chat::PostMessageRequest {
-    //     //     channel: channel_id,
-    //     //     text: &full_message,
-    //     //     ..Default::default()
-    //     // };
-    //     let request = slack::chat::post_message::PostMessageRequest {
-    //         channel: channel_id.to_string(),
-    //         text: Some(full_message),
-    //         ..Default::default()
-    //     };
-    //     let mut counter: u32 = 1;
-    //     let mut message_sent = false;
-    //     while (counter <= self.num_retry) & !message_sent {
-    //         // match slack::api::chat::post_message(&client, &self.api_token, &request) {
-    //         //     Ok(_) => message_sent = true,
-    //         //     Err(e) => {
-    //         //         self.logger.log_error(&format!(
-    //         //             "Error in sending message after trial {counter}, {e}"
-    //         //         ));
-    //         //         counter += 1;
-    //         //         time_operation::sleep(self.retry_sleep)
-    //         //     }
-    //         // }
-    //         match executor::block_on(slack::chat::post_message::post_message(
-    //             &client,
-    //             &request,
-    //             &self.api_token,
-    //         )) {
-    //             Ok(_) => message_sent = true,
-    //             Err(e) => match e {
-    //                 slack::error::Error::SerdeJsonError(_) => message_sent = true,
-    //                 _ => {
-    //                     self.logger.log_error(&format!(
-    //                         "Error in sending message after trial {counter}, {e}"
-    //                     ));
-    //                     counter += 1;
-    //                     time_operation::sleep(self.retry_sleep)
-    //                 }
-    //             },
-    //         }
-    //     }
-    // }
-
-    pub fn retry_send_message(&self, calling_func: &str, message: &str, log_only: bool) {
-        let channel_id = self.get_channel_id(log_only);
+    pub fn retry_send_message(&self, caller: &str, message: &str, channel: &Channel) {
+        let channel_id = self.get_channel_id(channel);
         let client = Client::new();
-        let full_message = format!("Message sending from {}: {}", calling_func, message);
+        let full_message = format!("Message sending from {caller}:\n\n{message}");
         let request = json!({
             Self::CHANNEL: channel_id,
             Self::TEXT: Some(full_message),
@@ -162,6 +113,12 @@ impl APIKey {
     }
 }
 
+pub enum Channel {
+    Report,
+    Error,
+    LogOnly
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -209,10 +166,11 @@ mod tests {
             .join("Config")
             .join("config_sctys_rust_utilities");
         let channel_config_file = "messenger_channel_id.toml";
-        let channel_id = load_channel_id(&channel_config_path, channel_config_file);
-        let log_channel_id = channel_id.clone();
-        let slack_messenger = SlackMessenger::new(channel_id, log_channel_id, &project_logger);
+        let report_channel_id = load_channel_id(&channel_config_path, channel_config_file);
+        let log_channel_id = report_channel_id.clone();
+        let error_channel_id = report_channel_id.clone();
+        let slack_messenger = SlackMessenger::new(report_channel_id, error_channel_id, log_channel_id, &project_logger);
         let calling_func = utilities_function::function_name!(true);
-        slack_messenger.retry_send_message(calling_func, "Test message from rust", false);
+        slack_messenger.retry_send_message(calling_func, "Test message from rust", &Channel::Report);
     }
 }

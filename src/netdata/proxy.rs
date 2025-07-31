@@ -11,7 +11,10 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{logger::ProjectLogger, time_operation};
+use crate::{
+    logger::ProjectLogger,
+    time_operation::{self, async_sleep},
+};
 
 pub struct ScraperProxy<'a> {
     logger: &'a ProjectLogger,
@@ -144,6 +147,7 @@ impl<'a> ScraperProxy<'a> {
         {
             let debug_str = "Refresh proxy list because next refresh time is over";
             self.logger.log_debug(debug_str);
+            async_sleep(Duration::from_secs(60)).await;
             self.get_full_proxy_list().await?;
         }
         Ok(())
@@ -167,8 +171,8 @@ impl<'a> ScraperProxy<'a> {
 pub struct ProxyResult {
     username: String,
     password: String,
-    proxy_address: String,
-    port: u32,
+    pub proxy_address: String,
+    pub port: u32,
     valid: bool,
 }
 
@@ -259,23 +263,49 @@ impl ProxyList {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PlanResult {
+    id: i32,
+    status: String,
     automatic_refresh_next_at: Option<String>,
 }
 
+impl ProxyRequest for PlanResult {}
+
 impl PlanResult {
+    async fn request_proxy_plan(
+        proxy_plan_url: &str,
+        proxy_token: &str,
+    ) -> Result<Self, ProxyError> {
+        let response = Self::request_in_proxy_site(proxy_plan_url, proxy_token).await?;
+        Ok(serde_json::from_str(&response)?)
+    }
+}
+
+impl PlanResult {
+    const ACTIVE: &str = "active";
     async fn get_next_refresh_time(
         proxy_plan_url: &str,
         proxy_token: &str,
     ) -> Result<Option<i64>, ProxyError> {
         let proxy_plan = PlanList::request_proxy_plan(proxy_plan_url, proxy_token).await?;
-        Ok(proxy_plan
+        if let Some(plan_id) = proxy_plan
             .results
-            .first()
-            .and_then(|plan| plan.automatic_refresh_next_at.as_ref())
-            .map(|time_str| {
-                time_operation::date_time_timezone_from_string(time_str, "%Y-%m-%dT%H:%M:%SZ")
-                    .timestamp()
-            }))
+            .iter()
+            .find(|result| result.status.as_str() == Self::ACTIVE)
+            .map(|plan| plan.id)
+        {
+            let proxy_plan_url = format!("{proxy_plan_url}{plan_id}/");
+            let proxy_plan = PlanResult::request_proxy_plan(&proxy_plan_url, proxy_token).await?;
+            if let Some(time_str) = proxy_plan.automatic_refresh_next_at.as_ref() {
+                Ok(Some(
+                    time_operation::date_time_timezone_from_string(time_str, "%Y-%m-%dT%H:%M:%SZ")?
+                        .timestamp(),
+                ))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -345,6 +375,7 @@ pub enum ProxyError {
     Reqwest(reqwest::Error),
     Rquest(rquest::Error),
     Json(serde_json::Error),
+    Chrono(chrono::ParseError),
     Header(InvalidHeaderValue),
     NoValidProxy(String),
 }
@@ -355,6 +386,7 @@ impl Display for ProxyError {
             ProxyError::Reqwest(e) => write!(f, "Reqwest error: {e}"),
             ProxyError::Rquest(e) => write!(f, "Rquest error: {e}"),
             ProxyError::Json(e) => write!(f, "Json error: {e}"),
+            ProxyError::Chrono(e) => write!(f, "Chrono error: {e}"),
             ProxyError::Header(e) => write!(f, "Header error: {e}"),
             ProxyError::NoValidProxy(e) => write!(f, "Proxy error: {e}"),
         }
@@ -378,6 +410,12 @@ impl From<rquest::Error> for ProxyError {
 impl From<serde_json::Error> for ProxyError {
     fn from(value: serde_json::Error) -> Self {
         ProxyError::Json(value)
+    }
+}
+
+impl From<chrono::ParseError> for ProxyError {
+    fn from(value: chrono::ParseError) -> Self {
+        ProxyError::Chrono(value)
     }
 }
 

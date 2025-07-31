@@ -1,10 +1,10 @@
 use chrono::{
-    DateTime, Datelike, Duration as LongDuration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime,
-    TimeZone, Timelike, Utc,
+    DateTime, Datelike, Duration as LongDuration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, ParseResult, TimeZone, Timelike, Utc
 };
 use chrono_tz::Tz;
 use mongodb::bson::DateTime as BsonDateTime;
-use rand::{thread_rng, Rng};
+use rand::SeedableRng;
+use rand::{thread_rng, Rng, rngs::StdRng};
 use std::thread;
 use std::time::{Duration, SystemTime};
 use tokio::time;
@@ -36,7 +36,7 @@ pub async fn async_random_sleep((min_sleep_time, max_sleep_time): (Duration, Dur
     if min_sleep_time == max_sleep_time {
         time::sleep(min_sleep_time).await
     } else {
-        let mut rng = thread_rng();
+        let mut rng = StdRng::from_entropy();
         let sleep_time = rng.gen_range(min_sleep_time..max_sleep_time);
         time::sleep(sleep_time).await;
     }
@@ -168,6 +168,16 @@ pub fn date_time_to_int<T: TimeZone>(date_time: &DateTime<T>) -> i32 {
     date_time.year() * 10000 + date_time.month() as i32 * 100 + date_time.day() as i32
 }
 
+pub fn naive_date_to_int(naive_date: &NaiveDate) -> i32 {
+    naive_date.year() * 10000 + naive_date.month() as i32 * 100 + naive_date.day() as i32
+}
+
+pub fn naive_date_time_to_int(naive_date_time: &NaiveDateTime) -> i32 {
+    naive_date_time.year() * 10000
+        + naive_date_time.month() as i32 * 100
+        + naive_date_time.day() as i32
+}
+
 pub fn parse_int_to_utc_date_time(date_int: i32) -> DateTime<Utc> {
     let year = date_int / 10000;
     let month = (date_int % 10000) / 100;
@@ -235,30 +245,16 @@ pub fn utc_date_time_to_timezone(date_time: &DateTime<Utc>, timezone: Tz) -> Dat
     date_time.with_timezone(&timezone)
 }
 
-pub fn naive_date_from_string(date_str: &str, fmt: &str) -> NaiveDate {
-    match NaiveDate::parse_from_str(date_str, fmt) {
-        Ok(d) => d,
-        Err(e) => panic!("Unable to parse the date from string for {date_str} in {fmt}, {e}"),
-    }
+pub fn naive_date_from_string(date_str: &str, fmt: &str) -> ParseResult<NaiveDate> {
+    NaiveDate::parse_from_str(date_str, fmt)
 }
 
-pub fn naive_date_time_from_string(date_time_str: &str, fmt: &str) -> NaiveDateTime {
-    match NaiveDateTime::parse_from_str(date_time_str, fmt) {
-        Ok(dt) => dt,
-        Err(e) => {
-            panic!("Unable to parse the date time from string for {date_time_str} in {fmt}, {e}")
-        }
-    }
+pub fn naive_date_time_from_string(date_time_str: &str, fmt: &str) -> ParseResult<NaiveDateTime> {
+    NaiveDateTime::parse_from_str(date_time_str, fmt)
 }
 
-pub fn date_time_timezone_from_string(date_time_str: &str, fmt: &str) -> DateTime<FixedOffset> {
-    if let Ok(date_time) = DateTime::parse_from_rfc3339(date_time_str) {
-        date_time
-    } else {
-        DateTime::parse_from_str(date_time_str, fmt).unwrap_or_else(|e| {
-            panic!("Unable to parse the date time with time zone from string for {date_time_str} in {fmt}, {e}")
-        })
-    }
+pub fn date_time_timezone_from_string(date_time_str: &str, fmt: &str) -> ParseResult<DateTime<FixedOffset>> {
+    DateTime::parse_from_rfc3339(date_time_str).or_else(|_| DateTime::parse_from_str(date_time_str, fmt))
 }
 
 pub fn utc_date_range(start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<DateTime<Utc>> {

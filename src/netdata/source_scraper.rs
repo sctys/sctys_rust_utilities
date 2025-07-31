@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use playwright_rust::{api::Viewport, Playwright};
 use rquest_util::Emulation;
@@ -33,9 +33,10 @@ impl<'a> SourceScraper<'a> {
         scraper_proxy
     }
 
-    pub fn get_rquest_client(&self) -> Result<rquest::Client, ScraperError> {
+    pub fn get_rquest_client(&self, timeout: Duration) -> Result<rquest::Client, ScraperError> {
         let rquest_client = rquest::Client::builder()
             .emulation(Self::RQUEST_BROWSER)
+            .connect_timeout(timeout)
             .build()?;
         let debug_str = "Rquest client initialized";
         self.logger.log_debug(debug_str);
@@ -96,7 +97,7 @@ impl<'a> SourceScraper<'a> {
         (original_domain, new_domain)
     }
 
-    fn url_from_google_sheet_link(google_sheet_key: &str) -> String {
+    pub fn url_from_google_sheet_link(google_sheet_key: &str) -> String {
         let (replace_token_from, replace_token_to) = Self::GOOGLE_SHEET_REPLACE_TOKEN;
         let csv_link = format!(
             "{}{}",
@@ -104,16 +105,6 @@ impl<'a> SourceScraper<'a> {
             google_sheet_key.replace(replace_token_from, replace_token_to,)
         );
         csv_link
-    }
-
-    pub async fn download_google_sheet(
-        &self,
-        google_sheet_key: &str,
-    ) -> Result<Response, ScraperError> {
-        let google_sheet_url = Self::url_from_google_sheet_link(google_sheet_key);
-        let request_options = RequestOptions::default();
-        self.request_with_reqwest(&google_sheet_url, &request_options, None, None)
-            .await
     }
 
     pub async fn request_with_reqwest(
@@ -125,7 +116,9 @@ impl<'a> SourceScraper<'a> {
     ) -> Result<Response, ScraperError> {
         let debug_log = format!("Attempting to make a request to {} with reqwest", url);
         self.logger.log_debug(&debug_log);
-        let mut client_builder = reqwest::ClientBuilder::new().timeout(request_options.timeout);
+        let mut client_builder = reqwest::ClientBuilder::new()
+            .connect_timeout(request_options.connect_timeout)
+            .timeout(request_options.timeout);
         if let Some(headers) = &request_options.headers {
             client_builder = client_builder.default_headers(headers.clone());
         }
@@ -136,18 +129,30 @@ impl<'a> SourceScraper<'a> {
                 .reqwest_send(&client, request)
                 .await
                 .map_err(ScraperError::from)?
-                .error_for_status()?
+        } else if let Some(scraper_proxy) = scraper_proxy {
+            let proxy_result = scraper_proxy.generate_proxy().await?;
+            let proxy = proxy_result.get_reqwest_proxy()?;
+            client_builder = client_builder.proxy(proxy);
+            let response = client_builder.build()?.get(url).send().await.map_err(|e| {
+                if e.is_timeout() {
+                    let warn_str = format!(
+                        "Proxy request {}:{} timed out",
+                        proxy_result.proxy_address, proxy_result.port
+                    );
+                    self.logger.log_warn(&warn_str);
+                    e
+                } else {
+                    e
+                }
+            })?;
+            if !request_options.allow_forbidden_proxy
+                && response.status() == reqwest::StatusCode::FORBIDDEN
+            {
+                scraper_proxy.add_proxy_block_count(&proxy_result);
+            };
+            response
         } else {
-            if let Some(scraper_proxy) = scraper_proxy {
-                let proxy = scraper_proxy.generate_proxy().await?.get_reqwest_proxy()?;
-                client_builder = client_builder.proxy(proxy);
-            }
-            client_builder
-                .build()?
-                .get(url)
-                .send()
-                .await?
-                .error_for_status()?
+            client_builder.build()?.get(url).send().await?
         };
         Response::from_reqwest_response(response).await
     }
@@ -164,7 +169,9 @@ impl<'a> SourceScraper<'a> {
         self.logger.log_debug(&debug_log);
         let mut request_builder = client.get(url);
         if let Some(headers) = &request_options.headers {
-            request_builder = request_builder.headers(headers.clone());
+            request_builder = request_builder
+                .headers(headers.clone())
+                .timeout(request_options.timeout);
         }
         let response = if let Some(api_gateway) = api_gateway {
             let request = request_builder.build()?;
@@ -172,12 +179,29 @@ impl<'a> SourceScraper<'a> {
                 .rquest_send(client, request)
                 .await
                 .map_err(ScraperError::from)?
-                .error_for_status()?
+        } else if let Some(scraper_proxy) = scraper_proxy {
+            let proxy_result = scraper_proxy.generate_proxy().await?;
+            let proxy = proxy_result.get_rquest_proxy()?;
+            request_builder = request_builder.proxy(proxy);
+            let response = request_builder.send().await.map_err(|e| {
+                if e.is_timeout() {
+                    let warn_str = format!(
+                        "Proxy request {}:{} timed out",
+                        proxy_result.proxy_address, proxy_result.port
+                    );
+                    self.logger.log_warn(&warn_str);
+                    e
+                } else {
+                    e
+                }
+            })?;
+            if !request_options.allow_forbidden_proxy
+                && response.status() == rquest::StatusCode::FORBIDDEN
+            {
+                scraper_proxy.add_proxy_block_count(&proxy_result);
+            };
+            response
         } else {
-            if let Some(scraper_proxy) = scraper_proxy {
-                let proxy = scraper_proxy.generate_proxy().await?.get_rquest_proxy()?;
-                request_builder = request_builder.proxy(proxy);
-            }
             request_builder.send().await?
         };
         Response::from_rquest_response(response).await
@@ -192,13 +216,19 @@ impl<'a> SourceScraper<'a> {
     ) -> Result<Response, ScraperError> {
         let debug_log = format!("Attempting to make a request to {} with curl_cffi", url);
         self.logger.log_debug(&debug_log);
-        let proxy = if let Some(scraper_proxy) = scraper_proxy {
-            Some(scraper_proxy.generate_proxy().await?.get_http_address())
+        if let Some(scraper_proxy) = scraper_proxy {
+            let proxy_result = scraper_proxy.generate_proxy().await?;
+            let proxy = Some(proxy_result.get_http_address());
+            let py_response = curl_cffi_client.request(url, request_options, proxy)?;
+            let response = py_response.to_response()?;
+            if !request_options.allow_forbidden_proxy && response.status_code == 403 {
+                scraper_proxy.add_proxy_block_count(&proxy_result);
+            };
+            Ok(response)
         } else {
-            None
-        };
-        let py_response = curl_cffi_client.request(url, request_options, proxy)?;
-        py_response.to_response()
+            let py_response = curl_cffi_client.request(url, request_options, None)?;
+            py_response.to_response()
+        }
     }
 
     pub async fn request_with_playwright(
@@ -214,49 +244,157 @@ impl<'a> SourceScraper<'a> {
         let chromium = playwright.chromium();
         let mut browser = chromium
             .launcher()
-            .timeout(request_options.timeout.as_millis() as f64)
+            .timeout(request_options.connect_timeout.as_millis() as f64)
             .headless(browser_options.headless);
         if let Some(scraper_proxy) = scraper_proxy {
-            let proxy = scraper_proxy.generate_proxy().await?.get_playwright_proxy();
+            let proxy_result = scraper_proxy.generate_proxy().await?;
+            let proxy = proxy_result.get_playwright_proxy();
             browser = browser.proxy(proxy);
-        }
-        let browser = browser
-            .launch()
-            .await
-            .map_err(playwright_rust::Error::from)?;
-        let context = browser.context_builder()
-            .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
-            .viewport(Some(Viewport { width: 1920, height: 1080 }))
-            .build().await.map_err(playwright_rust::Error::from)?;
-        let page = context
-            .new_page()
-            .await
-            .map_err(playwright_rust::Error::from)?;
-        let response = page
-            .goto_builder(url)
-            .goto()
-            .await
-            .map_err(playwright_rust::Error::from)?;
-        if let Some(response) = response {
-            if let Some(page_evaluation) = &browser_options.page_evaluation {
-                page.eval::<()>(page_evaluation)
+            let browser = browser
+                .launch()
+                .await
+                .map_err(playwright_rust::Error::from)?;
+            let context = browser.context_builder()
+                                    .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+                                                .viewport(Some(Viewport { width: 1920, height: 1080 }))
+                                                            .build().await.map_err(playwright_rust::Error::from)?;
+            let page = context
+                .new_page()
+                .await
+                .map_err(playwright_rust::Error::from)?;
+            let response = page
+                .goto_builder(url)
+                .timeout(request_options.timeout.as_millis() as f64)
+                .goto()
+                .await
+                .map_err(playwright_rust::Error::from)?;
+            let cookies = context
+                .cookies(&[])
+                .await
+                .map_err(playwright_rust::Error::from)?
+                .iter()
+                .map(|c| (c.name.to_string(), c.value.to_string()))
+                .collect();
+            if let Some(response) = response {
+                if let Some(page_evaluation) = &browser_options.page_evaluation {
+                    page.eval::<()>(page_evaluation)
+                        .await
+                        .map_err(playwright_rust::Error::from)?;
+                }
+                time_operation::async_sleep(browser_options.browser_wait).await;
+                let status_code = response.status()? as u16;
+                if !request_options.allow_forbidden_proxy && status_code == 403 {
+                    scraper_proxy.add_proxy_block_count(&proxy_result);
+                }
+                let response = {
+                    Response {
+                        content: page.content().await.map_err(playwright_rust::Error::from)?,
+                        status_code: response.status()? as u16,
+                        url: page.url()?,
+                        ok: response.ok()?,
+                        reason: response.status_text()?,
+                        cookies,
+                    }
+                };
+                page.close(None)
                     .await
                     .map_err(playwright_rust::Error::from)?;
+                context
+                    .close()
+                    .await
+                    .map_err(playwright_rust::Error::from)?;
+                browser
+                    .close()
+                    .await
+                    .map_err(playwright_rust::Error::from)?;
+                Ok(response)
+            } else {
+                page.close(None)
+                    .await
+                    .map_err(playwright_rust::Error::from)?;
+                context
+                    .close()
+                    .await
+                    .map_err(playwright_rust::Error::from)?;
+                browser
+                    .close()
+                    .await
+                    .map_err(playwright_rust::Error::from)?;
+                Err(ScraperError::Other(format!(
+                    "No response from playwright for url {url}"
+                )))
             }
-            time_operation::async_sleep(browser_options.browser_wait).await;
-            Ok({
-                Response {
-                    content: page.content().await.map_err(playwright_rust::Error::from)?,
-                    status_code: response.status()? as u16,
-                    url: page.url()?,
-                    ok: response.ok()?,
-                    reason: response.status_text()?,
-                }
-            })
         } else {
-            Err(ScraperError::Other(format!(
-                "No response from playwright for url {url}"
-            )))
+            let browser = browser
+                .launch()
+                .await
+                .map_err(playwright_rust::Error::from)?;
+            let context = browser.context_builder()
+                                    .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+                                                .viewport(Some(Viewport { width: 1920, height: 1080 }))
+                                                            .build().await.map_err(playwright_rust::Error::from)?;
+            let page = context
+                .new_page()
+                .await
+                .map_err(playwright_rust::Error::from)?;
+            let response = page
+                .goto_builder(url)
+                .timeout(request_options.timeout.as_millis() as f64)
+                .goto()
+                .await
+                .map_err(playwright_rust::Error::from)?;
+            let cookies = context
+                .cookies(&[])
+                .await
+                .map_err(playwright_rust::Error::from)?
+                .iter()
+                .map(|c| (c.name.to_string(), c.value.to_string()))
+                .collect();
+            if let Some(response) = response {
+                if let Some(page_evaluation) = &browser_options.page_evaluation {
+                    page.eval::<()>(page_evaluation)
+                        .await
+                        .map_err(playwright_rust::Error::from)?;
+                }
+                time_operation::async_sleep(browser_options.browser_wait).await;
+                let response = {
+                    Response {
+                        content: page.content().await.map_err(playwright_rust::Error::from)?,
+                        status_code: response.status()? as u16,
+                        url: page.url()?,
+                        ok: response.ok()?,
+                        reason: response.status_text()?,
+                        cookies,
+                    }
+                };
+                page.close(None)
+                    .await
+                    .map_err(playwright_rust::Error::from)?;
+                context
+                    .close()
+                    .await
+                    .map_err(playwright_rust::Error::from)?;
+                browser
+                    .close()
+                    .await
+                    .map_err(playwright_rust::Error::from)?;
+                Ok(response)
+            } else {
+                page.close(None)
+                    .await
+                    .map_err(playwright_rust::Error::from)?;
+                context
+                    .close()
+                    .await
+                    .map_err(playwright_rust::Error::from)?;
+                browser
+                    .close()
+                    .await
+                    .map_err(playwright_rust::Error::from)?;
+                Err(ScraperError::Other(format!(
+                    "No response from playwright for url {url}"
+                )))
+            }
         }
     }
 
@@ -333,8 +471,10 @@ mod tests {
         let scraper = SourceScraper::new(&project_logger);
         let url = "https://browserleaks.com/ip";
         let request_options = RequestOptions {
-            timeout: Duration::from_secs(10),
+            connect_timeout: Duration::from_secs(5),
+            timeout: Duration::from_secs(15),
             headers: None,
+            allow_forbidden_proxy: false,
         };
         let response = scraper
             .request_with_reqwest(url, &request_options, None, None)
@@ -370,10 +510,14 @@ mod tests {
         let scraper = SourceScraper::new(&project_logger);
         let url = "https://browserleaks.com/ip";
         let request_options = RequestOptions {
-            timeout: Duration::from_secs(10),
+            connect_timeout: Duration::from_secs(5),
+            timeout: Duration::from_secs(15),
             headers: None,
+            allow_forbidden_proxy: false,
         };
-        let rquest_client = scraper.get_rquest_client().unwrap();
+        let rquest_client = scraper
+            .get_rquest_client(request_options.connect_timeout)
+            .unwrap();
         let response = scraper
             .request_with_rquest(url, &request_options, &rquest_client, None, None)
             .await
@@ -420,8 +564,10 @@ mod tests {
         let scraper = SourceScraper::new(&project_logger);
         let url = "https://browserleaks.com/ip";
         let request_options = RequestOptions {
-            timeout: Duration::from_secs(10),
+            connect_timeout: Duration::from_secs(5),
+            timeout: Duration::from_secs(15),
             headers: None,
+            allow_forbidden_proxy: false,
         };
         let curl_cffi_client = scraper.get_curl_cffi_client().unwrap();
         let response = scraper
@@ -455,8 +601,10 @@ mod tests {
         let scraper = SourceScraper::new(&project_logger);
         let url = "https://browserleaks.com/ip";
         let request_options = RequestOptions {
-            timeout: Duration::from_secs(10),
+            connect_timeout: Duration::from_secs(5),
+            timeout: Duration::from_secs(15),
             headers: None,
+            allow_forbidden_proxy: false,
         };
         let browse_options = BrowseOptions {
             headless: true,
@@ -496,8 +644,10 @@ mod tests {
         let scraper = SourceScraper::new(&project_logger);
         let url = "https://browserleaks.com/ip";
         let request_options = RequestOptions {
-            timeout: Duration::from_secs(10),
+            connect_timeout: Duration::from_secs(5),
+            timeout: Duration::from_secs(15),
             headers: None,
+            allow_forbidden_proxy: false,
         };
         let browse_options = BrowseOptions {
             headless: true,
@@ -523,8 +673,10 @@ mod tests {
         let scraper = SourceScraper::new(&project_logger);
         let url = "https://browserleaks.com/ip";
         let request_options = RequestOptions {
-            timeout: Duration::from_secs(10),
+            connect_timeout: Duration::from_secs(5),
+            timeout: Duration::from_secs(15),
             headers: None,
+            allow_forbidden_proxy: false,
         };
         let (original_domain, new_domain) = scraper.get_update_domain(url, &request_options).await;
         dbg!(original_domain);

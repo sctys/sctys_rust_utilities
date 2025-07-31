@@ -2,8 +2,9 @@ use std::{collections::HashMap, error::Error, fmt::Display, time::Duration};
 
 use chrono::{DateTime, Utc};
 use pyo3::{
+    exceptions::PyKeyboardInterrupt,
     prelude::*,
-    types::{IntoPyDict, PyDict},
+    types::{IntoPyDict, PyDict, PyTuple},
 };
 use reqwest::{header::HeaderMap, Url};
 
@@ -101,20 +102,25 @@ impl FilterOptions {
 }
 
 pub struct RequestOptions {
+    pub connect_timeout: Duration,
     pub timeout: Duration,
     pub headers: Option<HeaderMap>,
+    pub allow_forbidden_proxy: bool,
 }
 
 impl Default for RequestOptions {
     fn default() -> Self {
         Self {
+            connect_timeout: RequestOptions::DEFAULT_CONNECT_TIMEOUT,
             timeout: RequestOptions::DEFAULT_TIMEOUT,
             headers: None,
+            allow_forbidden_proxy: false,
         }
     }
 }
 
 impl RequestOptions {
+    const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
     const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 
     pub fn convert_header_map_to_map(&self) -> Option<HashMap<String, String>> {
@@ -151,6 +157,7 @@ pub struct Response {
     pub url: String,
     pub ok: bool,
     pub reason: String,
+    pub cookies: HashMap<String, String>,
 }
 
 impl Response {
@@ -163,12 +170,17 @@ impl Response {
             .canonical_reason()
             .unwrap_or_default()
             .to_string();
+        let cookies = response
+            .cookies()
+            .map(|c| (c.name().to_string(), c.value().to_string()))
+            .collect();
         Ok(Self {
             content: response.text().await?,
             status_code,
             url,
             ok,
             reason,
+            cookies,
         })
     }
 
@@ -181,12 +193,17 @@ impl Response {
             .canonical_reason()
             .unwrap_or_default()
             .to_string();
+        let cookies = response
+            .cookies()
+            .map(|c| (c.name().to_string(), c.value().to_string()))
+            .collect();
         Ok(Self {
             content: response.text().await?,
             status_code,
             url,
             ok,
             reason,
+            cookies,
         })
     }
 }
@@ -198,6 +215,7 @@ pub struct PyResponse {
     url: String,
     ok: bool,
     reason: String,
+    cookies: HashMap<String, String>,
 }
 
 impl PyResponse {
@@ -208,6 +226,7 @@ impl PyResponse {
             url: self.url,
             ok: self.ok,
             reason: self.reason,
+            cookies: self.cookies,
         })
     }
 }
@@ -252,13 +271,23 @@ impl CurlCffiClient {
         proxy: Option<String>,
     ) -> Result<PyResponse, ScraperError> {
         Python::with_gil(|py| {
+            if let Err(e) = py.check_signals() {
+                if e.is_instance_of::<PyKeyboardInterrupt>(py) {
+                    panic!("Received keyboard interrupt. Exiting");
+                }
+            }
             NetdataPythonPath::append_script_path(&py)?;
             let request_curl_cffi = py.import(PythonTxt::RequestCurlCffi.to_string())?;
             let kwargs = PyDict::new(py);
             let session = &self.curl_cffi_session;
+            let connect_timeout = request_options.connect_timeout.as_secs() as i64;
+            let read_timeout = request_options
+                .timeout
+                .saturating_sub(request_options.connect_timeout)
+                .as_secs() as i64;
             kwargs.set_item(
                 PythonTxt::Timeout.to_string(),
-                request_options.timeout.as_secs(),
+                PyTuple::new(py, [connect_timeout, read_timeout])?,
             )?;
             if let Some(headers) = &request_options.convert_header_map_to_map() {
                 kwargs.set_item(PythonTxt::Headers.to_string(), headers)?;

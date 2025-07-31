@@ -19,8 +19,8 @@ use log4rs::encode::pattern::PatternEncoder;
 use log4rs::config::{Appender, Logger, Root};
 use log4rs::Config;
 
-const DEFAULT_MAX_FILE_SIZE_MB: u128 = 10;
-const DEFAULT_ROLLER_COUNT: u32 = 10;
+const DEFAULT_MAX_FILE_SIZE_MB: u128 = 100;
+const DEFAULT_ROLLER_COUNT: u32 = 20;
 
 static INIT_LOGGER: Once = Once::new();
 
