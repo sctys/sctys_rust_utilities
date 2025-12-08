@@ -131,7 +131,7 @@ impl<'a> FileIO<'a> {
                         String::from_utf8_lossy(&output.stderr)
                     );
                     self.project_logger.log_error(&error_str);
-                    Err(Error::new(ErrorKind::Other, error_str))
+                    Err(Error::other(error_str))
                 }
             }
             Err(e) => {
@@ -201,7 +201,7 @@ impl<'a> FileIO<'a> {
                         destination_path.display(),
                     );
                     self.project_logger.log_error(&error_str);
-                    Err(Error::new(ErrorKind::Other, error_str))
+                    Err(Error::other(error_str))
                 }
             }
             Err(e) => {
@@ -292,7 +292,7 @@ impl<'a> FileIO<'a> {
                                             destination_path.display()
                                         );
                                         self.project_logger.log_error(&error_str);
-                                        Err(Error::new(ErrorKind::Other, error_str))
+                                        Err(Error::other(error_str))
                                     }
                                 }
                                 Err(e) => {
@@ -312,7 +312,7 @@ impl<'a> FileIO<'a> {
                                 source_path.display()
                             );
                             self.project_logger.log_error(&error_str);
-                            Err(Error::new(ErrorKind::Other, error_str))
+                            Err(Error::other(error_str))
                         }
                     }
                     Err(e) => {
@@ -364,7 +364,7 @@ impl<'a> FileIO<'a> {
                             String::from_utf8_lossy(&output.stderr)
                         );
                         self.project_logger.log_error(&error_str);
-                        Err(Error::new(ErrorKind::Other, error_str))
+                        Err(Error::other(error_str))
                     }
                 }
                 Err(e) => {

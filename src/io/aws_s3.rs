@@ -1,6 +1,7 @@
 use crate::logger::ProjectLogger;
 use crate::time_operation;
 use crate::time_operation::SecPrecision;
+use aws_config::meta::region::RegionProviderChain;
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::config::http::HttpResponse;
 use aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Output;
@@ -11,25 +12,18 @@ use aws_sdk_s3::operation::{
 };
 use aws_sdk_s3::primitives::{ByteStream, ByteStreamError, SdkBody};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Object};
-use aws_sdk_s3::{
-    config::{Credentials, Region},
-    Client,
-};
+use aws_sdk_s3::Client;
 use aws_smithy_runtime_api::client::result::SdkError;
 use chrono::{DateTime, TimeZone};
 use polars::error::PolarsError;
 use polars::frame::DataFrame;
 use polars::io::{SerReader, SerWriter};
 use polars::prelude::{CsvReadOptions, CsvWriter, ParquetReader, ParquetWriter};
-use serde::Deserialize;
-use std::env;
-use std::fs;
 use std::io::{Cursor, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::result::Result;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use toml;
 
 const MULTIPART_SIZE: usize = 1024 * 1024 * 1024; // 1GB per part
 const LIMIT_SINGLE_UPLOAD: usize = 5 * MULTIPART_SIZE;
@@ -44,17 +38,8 @@ impl<'a> AWSFileIO<'a> {
     const MAX_KEY: i32 = 100;
 
     pub async fn new(project_logger: &'a ProjectLogger) -> AWSFileIO<'a> {
-        let api_key = APIKey::load_apikey();
-        let credentials = Credentials::new(
-            &api_key.aws_api_id,
-            &api_key.aws_api_secret,
-            None,
-            None,
-            "s3_access",
-        );
-        let region = Region::new(api_key.aws_api_region.clone());
+        let region = RegionProviderChain::default_provider();
         let config = aws_config::defaults(BehaviorVersion::latest())
-            .credentials_provider(credentials)
             .region(region)
             .load()
             .await;
@@ -244,7 +229,7 @@ impl<'a> AWSFileIO<'a> {
                     folder_path.display()
                 );
                 self.project_logger.log_error(&error_str);
-                AWSLoadFileError::SdkError(e)
+                AWSLoadFileError::SdkError(Box::new(e))
             });
         get_object?.body.collect().await.map_or_else(
             |e| {
@@ -320,7 +305,7 @@ impl<'a> AWSFileIO<'a> {
                     folder_path.display()
                 );
                 self.project_logger.log_error(&error_str);
-                AWSLoadFileError::SdkError(e)
+                AWSLoadFileError::SdkError(Box::new(e))
             });
         let byte = get_object?.body.collect().await.map_err(|e| {
             let error_str = format!(
@@ -411,7 +396,7 @@ impl<'a> AWSFileIO<'a> {
                     folder_path.display()
                 );
                 self.project_logger.log_error(&error_str);
-                AWSLoadFileError::SdkError(e)
+                AWSLoadFileError::SdkError(Box::new(e))
             });
         let byte = get_object?.body.collect().await.map_err(|e| {
             let error_str = format!(
@@ -500,7 +485,7 @@ impl<'a> AWSFileIO<'a> {
                     folder_path.display()
                 );
                 self.project_logger.log_error(&error_str);
-                AWSLoadFileError::SdkError(e)
+                AWSLoadFileError::SdkError(Box::new(e))
             });
         let byte = get_object?.body.collect().await.map_err(|e| {
             let error_str = format!(
@@ -786,7 +771,7 @@ impl<'a> AWSFileIO<'a> {
 
 #[derive(Debug)]
 pub enum AWSLoadFileError {
-    SdkError(SdkError<GetObjectError, HttpResponse>),
+    SdkError(Box<SdkError<GetObjectError, HttpResponse>>),
     ByteStreamError(ByteStreamError),
     PolarsError(PolarsError),
     IOError(std::io::Error),
@@ -794,7 +779,7 @@ pub enum AWSLoadFileError {
 
 impl From<SdkError<GetObjectError, HttpResponse>> for AWSLoadFileError {
     fn from(err: SdkError<GetObjectError, HttpResponse>) -> Self {
-        AWSLoadFileError::SdkError(err)
+        AWSLoadFileError::SdkError(Box::new(err))
     }
 }
 
@@ -862,37 +847,10 @@ impl From<SdkError<CompleteMultipartUploadError, HttpResponse>> for AWSWriteFile
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct APIKey {
-    aws_api_id: String,
-    aws_api_secret: String,
-    aws_api_region: String,
-}
-
-impl APIKey {
-    const PROJECT_KEY: &str = "SCTYS_PROJECT";
-    const API_KEY_PATH: &str = "Secret/secret_sctys_rust_utilities";
-    const API_KEY_FILE: &str = "aws_s3_api.toml";
-
-    fn load_apikey() -> Self {
-        let full_api_path =
-            Path::new(&env::var(Self::PROJECT_KEY).expect("Unable to find project path"))
-                .join(Self::API_KEY_PATH)
-                .join(Self::API_KEY_FILE);
-        let api_str = match fs::read_to_string(full_api_path) {
-            Ok(api_str) => api_str,
-            Err(e) => panic!("Unable to load the api file. {e}"),
-        };
-        let api_key_data: Self = match toml::from_str(&api_str) {
-            Ok(api_data) => api_data,
-            Err(e) => panic!("Unable to parse the api file. {e}"),
-        };
-        api_key_data
-    }
-}
-
 #[cfg(test)]
 mod tests {
+
+    use std::env;
 
     use super::*;
     use crate::file_io::FileIO;

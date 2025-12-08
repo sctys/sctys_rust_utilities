@@ -12,11 +12,12 @@ aws-credential-types = "1.2"
 aws-sdk-apigateway = "1.68"
 aws-sdk-s3 = "1.84"
 aws-smithy-runtime-api = "1.8"
+aws-sdk-ssm = "1.90"
 byte-unit = "4.0.18"
 bzip2 = "0.4"
 chrono = "0.4"
 chrono-tz = "0.8"
-clickhouse = "0.13"
+clickhouse = {version = "0.13", features = ["inserter"]}
 duckdb = {version = "1.2", features = ["bundled", "parquet"]}
 flate2 = "1"
 futures = "0.3"
@@ -30,7 +31,7 @@ pyo3 = {version = "0.24.2", features = ["auto-initialize", "serde"]}
 mongodb = "3.2"
 rand = {version = "0.8.5", features = ["std"]}
 redis = "0.25.3"
-reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip", "cookies"]}
+reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots", "gzip", "cookies"]}
 rquest = {version ="5", features = ["cookies"]}
 rquest-util = "2"
 scraper = "0.14.0"

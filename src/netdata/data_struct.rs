@@ -1,6 +1,7 @@
 use std::{collections::HashMap, error::Error, fmt::Display, time::Duration};
 
 use chrono::{DateTime, Utc};
+use playwright_rust::Playwright;
 use pyo3::{
     exceptions::PyKeyboardInterrupt,
     prelude::*,
@@ -8,7 +9,7 @@ use pyo3::{
 };
 use reqwest::{header::HeaderMap, Url};
 
-use crate::python_utils::PythonPath;
+use crate::{netdata::playwright_js_client::PlaywrightClient, python_utils::PythonPath};
 
 use super::{
     proxy::ProxyError,
@@ -48,11 +49,19 @@ pub enum ResponseCheckResult {
     ErrTerminate(String),
 }
 
+pub enum ScraperClient<'a> {
+    Rquest(&'a rquest::Client),
+    CurlCffi(&'a CurlCffiClient),
+    Playwright(&'a Playwright),
+    PlaywrightJs(&'a PlaywrightClient),
+}
+
 pub enum Scraper {
     Reqwest(bool),
     Rquest(bool),
     CurlCffi,
     Playwright(BrowseOptions),
+    PlaywrightJs,
 }
 
 pub struct ScrapeOptions {
@@ -321,6 +330,7 @@ pub enum ScraperError {
     SerdeJsonError(serde_json::Error),
     IoError(std::io::Error),
     ApiGatewayError(Box<dyn Error + Send + Sync>),
+    PlaywrightJs(String),
     Other(String),
 }
 
@@ -336,6 +346,7 @@ impl Display for ScraperError {
             ScraperError::SerdeJsonError(e) => write!(f, "SerdeJsonError error: {e}"),
             ScraperError::IoError(e) => write!(f, "IO error: {e}"),
             ScraperError::ApiGatewayError(e) => write!(f, "ApiGatewayError error: {e}"),
+            ScraperError::PlaywrightJs(e) => write!(f, "PlaywrightJs error: {e}"),
             ScraperError::Other(e) => write!(f, "Other error: {e}"),
         }
     }

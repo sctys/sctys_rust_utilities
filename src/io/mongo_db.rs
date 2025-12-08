@@ -1,8 +1,4 @@
-use std::{
-    io::{Error, ErrorKind},
-    path::Path,
-    process::Command,
-};
+use std::{path::Path, process::Command};
 
 use chrono::{DateTime, Utc};
 use mongodb::{
@@ -301,7 +297,7 @@ impl<'a> MongoDB<'a> {
                         String::from_utf8_lossy(&output.stderr)
                     );
                     self.project_logger.log_error(&error_str);
-                    Err(Error::new(ErrorKind::Other, error_str).into())
+                    Err(mongodb::error::Error::custom(error_str))
                 }
             }
             Err(e) => {
@@ -310,7 +306,7 @@ impl<'a> MongoDB<'a> {
                     collection_name, query_str, database_name, e
                 );
                 self.project_logger.log_error(&error_str);
-                Err(Error::new(ErrorKind::Other, error_str).into())
+                Err(mongodb::error::Error::custom(error_str))
             }
         }
     }

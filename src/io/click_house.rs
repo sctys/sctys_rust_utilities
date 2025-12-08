@@ -1,9 +1,9 @@
-use std::{env, fs, path::Path, process::Command};
+use std::{path::Path, process::Command};
 
-use clickhouse::{error::Result, query::RowCursor, Client, Row};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use clickhouse::{error::Result, inserter::Inserter, query::RowCursor, Client, Row};
+use serde::{de::DeserializeOwned, Serialize};
 
-use crate::logger::ProjectLogger;
+use crate::{logger::ProjectLogger, secret::aws_secret::Secret, PROJECT};
 
 pub struct ClickHouse<'a> {
     project_logger: &'a ProjectLogger,
@@ -17,12 +17,21 @@ impl<'a> ClickHouse<'a> {
     const USER_NAME: &'static str = "default";
     const INSERT_TIME: &'static str = "insert_time";
 
-    pub fn new(project_logger: &'a ProjectLogger) -> Self {
-        let password = Password::load_password().password;
-        Self {
+    pub async fn new(project_logger: &'a ProjectLogger, secret: &Secret<'a>) -> Result<Self> {
+        const CATEGORY: &str = "clickhouse";
+        const NAME: &str = "password";
+        let password = secret
+            .get_secret_value(PROJECT, CATEGORY, NAME)
+            .await
+            .map_err(|e| {
+                let error_str = format!("Unable to get clickhouse password. {e}");
+                project_logger.log_error(&error_str);
+                clickhouse::error::Error::Custom(error_str)
+            })?;
+        Ok(Self {
             project_logger,
             password,
-        }
+        })
     }
 
     pub fn create_database_client(&self, database: &str) -> Client {
@@ -95,7 +104,13 @@ impl<'a> ClickHouse<'a> {
     ) -> Result<()> {
         let status = Command::new(Self::CLICKHOUSE_LOCAL)
             .arg("--query")
-            .arg(format!("INSERT INTO FUNCTION remote('{}', '{database}.{table_name}', '{}', '{}') SELECT *, toUnixTimestamp(now()) AS insert_time FROM file('{}/{file_name}', Parquet)",
+            .arg(format!("
+                    SET input_format_skip_unknown_fields = 0;
+                    SET input_format_with_names_use_header = 1;
+                    SET input_format_defaults_for_omitted_fields = 0;
+                    SET input_format_null_as_default = 0;
+                    INSERT INTO FUNCTION remote('{}', '{database}.{table_name}', '{}', '{}') 
+                    SELECT *, toUnixTimestamp(now()) AS insert_time FROM file('{}/{file_name}', Parquet)",
                 Self::LOCAL_HOST_PORT,
                 Self::USER_NAME,
                 &self.password,
@@ -121,7 +136,7 @@ impl<'a> ClickHouse<'a> {
                 folder_path.display()
             );
             self.project_logger.log_error(&error_str);
-            Err(std::io::Error::new(std::io::ErrorKind::Other, error_str).into())
+            Err(clickhouse::error::Error::Custom(error_str))
         }
     }
 
@@ -147,6 +162,18 @@ impl<'a> ClickHouse<'a> {
         }
         insert.end().await.map_err(|e| {
             let error_str = format!("Unable to end insert for table {table_name}. {e}");
+            self.project_logger.log_error(&error_str);
+            e
+        })
+    }
+
+    pub fn get_inserter_for_table<T: Serialize + Row + std::fmt::Debug>(
+        &self,
+        client: &Client,
+        table_name: &str,
+    ) -> Result<Inserter<T>> {
+        client.inserter(table_name).map_err(|e| {
+            let error_str = format!("Unable to create inserter for table {table_name}. {e}");
             self.project_logger.log_error(&error_str);
             e
         })
@@ -234,22 +261,48 @@ impl<'a> ClickHouse<'a> {
                 folder_path.display()
             );
             self.project_logger.log_error(&error_str);
-            Err(std::io::Error::new(std::io::ErrorKind::Other, error_str).into())
+            Err(clickhouse::error::Error::Custom(error_str))
         }
     }
 
-    pub async fn exporty_query_to_parquet(
+    pub fn export_table_to_parquet_with_filter(
         &self,
-        client: &Client,
-        query_str: &str,
+        database: &str,
+        table_name: &str,
+        filter_str: &str,
         folder_path: &Path,
         file_name: &str,
     ) -> Result<()> {
-        let main_query_str = format!(
-            "{query_str} INTO OUTFILE '{}/{file_name}' FORMAT Parquet",
-            folder_path.display()
-        );
-        self.sql_execution(client, main_query_str.as_str()).await
+        let status = Command::new(Self::CLICKHOUSE_LOCAL)
+            .arg("--query")
+            .arg(format!("SELECT * FROM remote('{}', '{database}.{table_name}', '{}', '{}') WHERE {filter_str} INTO OUTFILE '{}/{file_name}' FORMAT Parquet",
+                Self::LOCAL_HOST_PORT,
+                Self::USER_NAME,
+                &self.password,
+                folder_path.display(),
+            ))
+            .status()
+            .map_err(|e| {
+                let error_str = format!("Unable to execute command. {e}");
+                let error_str_redacted = error_str.replace(&self.password, "***");
+                self.project_logger.log_error(&error_str_redacted);
+                e
+            })?;
+        if status.success() {
+            let debug_str = format!(
+                "Exported table {table_name} in database {database} to {}/{file_name}",
+                folder_path.display()
+            );
+            self.project_logger.log_debug(&debug_str);
+            Ok(())
+        } else {
+            let error_str = format!(
+                "Unable to export table {table_name} in database {database} to {}/{file_name}",
+                folder_path.display()
+            );
+            self.project_logger.log_error(&error_str);
+            Err(clickhouse::error::Error::Custom(error_str))
+        }
     }
 
     pub async fn count_row_in_table(
@@ -270,6 +323,20 @@ impl<'a> ClickHouse<'a> {
         let count: usize = client.query(&query_str).fetch_one().await.unwrap_or(0);
         count
     }
+
+    pub async fn is_filter_empty(
+        &self,
+        client: &Client,
+        table_name: &str,
+        filter_str: &str,
+    ) -> bool {
+        let query_str = format!("SELECT 1 FROM {table_name} WHERE {filter_str} LIMIT 1");
+        !client
+            .query(&query_str)
+            .fetch_one::<u8>()
+            .await
+            .is_ok_and(|value| value == 1)
+    }
 }
 
 #[derive(Debug)]
@@ -284,6 +351,7 @@ pub enum ClickHouseType {
     Boolean(bool),
     Int32(bool),
     Int64(bool),
+    Float32(bool),
     Float64(bool),
     String(bool),
 }
@@ -312,6 +380,13 @@ impl ClickHouseType {
                     "Int64"
                 }
             }
+            Self::Float32(nullable) => {
+                if *nullable {
+                    "Nullable(Float32)"
+                } else {
+                    "Float32"
+                }
+            }
             Self::Float64(nullable) => {
                 if *nullable {
                     "Nullable(Float64)"
@@ -330,45 +405,14 @@ impl ClickHouseType {
     }
 }
 
-#[derive(Deserialize)]
-struct Password {
-    password: String,
-}
-
-impl Password {
-    const PROJECT_KEY: &str = "SCTYS_PROJECT";
-    const PASSWORD_PATH: &str = "Secret/secret_sctys_rust_utilities";
-    const PASSWORD_FILE: &str = "clickhouse_password.toml";
-
-    fn load_password() -> Self {
-        let full_api_path =
-            Path::new(&env::var(Self::PROJECT_KEY).expect("Unable to find project path"))
-                .join(Self::PASSWORD_PATH)
-                .join(Self::PASSWORD_FILE);
-        let password_str = fs::read_to_string(full_api_path)
-            .unwrap_or_else(|e| panic!("Unable to load the api file. {e}"));
-        toml::from_str(&password_str)
-            .unwrap_or_else(|e| panic!("Unable to parse the api file. {e}"))
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use log::LevelFilter;
     use strum::VariantArray;
-    use strum_macros::VariantArray;
 
     use super::*;
-
-    #[derive(Debug, Serialize, Deserialize, Row)]
-    #[serde(rename_all = "PascalCase")]
-    struct TestData {
-        venue: String,
-        surface_i_d: i32,
-        course_i_d: String,
-        home_straight: Option<i32>,
-        width: f64,
-    }
 
     #[derive(Debug, strum_macros::Display, VariantArray)]
     pub enum TestDataCol {
@@ -418,7 +462,8 @@ mod tests {
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         project_logger.set_logger(LevelFilter::Debug);
-        let clickhouse = ClickHouse::new(&project_logger);
+        let secret = Secret::new(&project_logger).await;
+        let clickhouse = ClickHouse::new(&project_logger, &secret).await.unwrap();
         let database = "test";
         let clickhouse_client = clickhouse.create_database_client(database);
         let test_table = "test_table";
@@ -434,15 +479,16 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn test_export_table_parquet() {
+    #[tokio::test]
+    async fn test_export_table_parquet() {
         let logger_name = "test_clickhouse";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         project_logger.set_logger(LevelFilter::Debug);
-        let clickhouse = ClickHouse::new(&project_logger);
+        let secret = Secret::new(&project_logger).await;
+        let clickhouse = ClickHouse::new(&project_logger, &secret).await.unwrap();
         let database = "test";
         let test_table = "test_table";
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
@@ -460,7 +506,8 @@ mod tests {
             .join("log_sctys_io");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         project_logger.set_logger(LevelFilter::Debug);
-        let clickhouse = ClickHouse::new(&project_logger);
+        let secret = Secret::new(&project_logger).await;
+        let clickhouse = ClickHouse::new(&project_logger, &secret).await.unwrap();
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let data_file = "test.parquet";
         let database = "test";
@@ -481,5 +528,24 @@ mod tests {
             .count_row_in_table(&clickhouse_client, test_table, None)
             .await;
         dbg!(new_row_count);
+    }
+
+    #[tokio::test]
+    async fn test_is_filter_empty() {
+        let logger_name = "test_clickhouse";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_io");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        project_logger.set_logger(LevelFilter::Debug);
+        let secret = Secret::new(&project_logger).await;
+        let clickhouse = ClickHouse::new(&project_logger, &secret).await.unwrap();
+        let client = clickhouse.create_database_client("test");
+        let table_name = "test_table";
+        let filter_str = "insert_time >= 1747030000";
+        let is_empty = clickhouse
+            .is_filter_empty(&client, table_name, filter_str)
+            .await;
+        dbg!(is_empty);
     }
 }

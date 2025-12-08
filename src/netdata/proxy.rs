@@ -1,4 +1,4 @@
-use std::{env, error::Error, fmt::Display, fs, path::Path, time::Duration};
+use std::{error::Error, fmt::Display, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{Duration as LongDuration, Utc};
@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     logger::ProjectLogger,
+    secret::aws_secret::Secret,
     time_operation::{self, async_sleep},
+    PROJECT,
 };
 
 pub struct ScraperProxy<'a> {
@@ -30,9 +32,9 @@ impl<'a> ScraperProxy<'a> {
     const BLOCK_COUNT: u8 = 3;
     const REFRESH_PERIOD: LongDuration = LongDuration::minutes(30);
 
-    pub fn new(logger: &'a ProjectLogger) -> Self {
-        let proxy_config = ProxyConfig::load_proxy_config();
-        Self {
+    pub async fn new(logger: &'a ProjectLogger, secret: &Secret<'a>) -> Result<Self, ProxyError> {
+        let proxy_config = ProxyConfig::load_proxy_config(logger, secret).await?;
+        Ok(Self {
             logger,
             full_proxy_list: Vec::new(),
             active_proxy_list: Vec::new(),
@@ -40,7 +42,7 @@ impl<'a> ScraperProxy<'a> {
             last_update: None,
             next_refresh_time: None,
             proxy_config,
-        }
+        })
     }
 
     async fn get_full_proxy_list(&mut self) -> Result<(), ProxyError> {
@@ -378,6 +380,7 @@ pub enum ProxyError {
     Chrono(chrono::ParseError),
     Header(InvalidHeaderValue),
     NoValidProxy(String),
+    Secret(String),
 }
 
 impl Display for ProxyError {
@@ -389,6 +392,7 @@ impl Display for ProxyError {
             ProxyError::Chrono(e) => write!(f, "Chrono error: {e}"),
             ProxyError::Header(e) => write!(f, "Header error: {e}"),
             ProxyError::NoValidProxy(e) => write!(f, "Proxy error: {e}"),
+            ProxyError::Secret(e) => write!(f, "Secret error: {e}"),
         }
     }
 }
@@ -432,34 +436,52 @@ struct ProxyConfig {
     proxy_token: String,
 }
 
-impl ProxyConfig {
-    const PROJECT_KEY: &str = "SCTYS_PROJECT";
-    const PROXY_CONFIG_PATH: &str = "Secret/secret_sctys_rust_utilities";
-    const PRXOY_CONFIG_FILE: &str = "proxy.toml";
+impl<'a> ProxyConfig {
+    async fn load_proxy_config(
+        project_logger: &ProjectLogger,
+        secret: &Secret<'a>,
+    ) -> Result<Self, ProxyError> {
+        const CATEGORY: &str = "proxy";
+        const PROXY_LIST_URL: &str = "proxy_list_url";
+        const PLAN_URL: &str = "plan_url";
+        const PROXY_TOKEN: &str = "proxy_token";
 
-    fn load_proxy_config() -> Self {
-        let full_proxy_path =
-            Path::new(&env::var(Self::PROJECT_KEY).expect("Unable to find project path"))
-                .join(Self::PROXY_CONFIG_PATH)
-                .join(Self::PRXOY_CONFIG_FILE);
-        let proxy_str = fs::read_to_string(&full_proxy_path).unwrap_or_else(|e| {
-            panic!(
-                "Unable to load the proxy file {}, {e}",
-                full_proxy_path.display()
-            )
-        });
-        let proxy_data: ProxyConfig = toml::from_str(&proxy_str).unwrap_or_else(|e| {
-            panic!(
-                "Unable to parse the proxy file {}, {e}",
-                full_proxy_path.display()
-            )
-        });
-        proxy_data
+        let proxy_list_url = secret
+            .get_secret_value(PROJECT, CATEGORY, PROXY_LIST_URL)
+            .await
+            .map_err(|e| {
+                let error_str = format!("Unable to get proxy list url. {e}",);
+                project_logger.log_error(&error_str);
+                ProxyError::Secret(error_str)
+            })?;
+        let plan_url = secret
+            .get_secret_value(PROJECT, CATEGORY, PLAN_URL)
+            .await
+            .map_err(|e| {
+                let error_str = format!("Unable to get plan url. {e}",);
+                project_logger.log_error(&error_str);
+                ProxyError::Secret(error_str)
+            })?;
+        let proxy_token = secret
+            .get_secret_value(PROJECT, CATEGORY, PROXY_TOKEN)
+            .await
+            .map_err(|e| {
+                let error_str = format!("Unable to get proxy token. {e}",);
+                project_logger.log_error(&error_str);
+                ProxyError::Secret(error_str)
+            })?;
+        Ok(Self {
+            proxy_list_url,
+            plan_url,
+            proxy_token,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    use std::{env, path::Path};
 
     use log::LevelFilter;
 
@@ -473,7 +495,8 @@ mod tests {
             .join("log_sctys_proxy");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         project_logger.set_logger(LevelFilter::Debug);
-        let mut scraper_proxy = ScraperProxy::new(&project_logger);
+        let secret = Secret::new(&project_logger).await;
+        let mut scraper_proxy = ScraperProxy::new(&project_logger, &secret).await.unwrap();
         for _ in 0..3 {
             let proxy = scraper_proxy.generate_proxy().await.unwrap();
             dbg!(proxy);

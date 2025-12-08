@@ -5,14 +5,11 @@ use aws_sdk_apigateway::types::{EndpointConfiguration, EndpointType};
 use aws_sdk_apigateway::{config::Region, Client as ApiGatewayClient};
 use futures::future::join_all;
 use rand::prelude::*;
-use serde::Deserialize;
 use std::collections::HashSet;
 use std::error::Error;
 use std::net::Ipv4Addr;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{env, fs};
 use strum_macros::Display;
 
 fn to_kebab_case_with_digit_boundary(s: &str) -> String {
@@ -158,13 +155,12 @@ impl ApiGatewayConfig {
     }
 
     pub fn form_config(url: &str, regions: Option<Vec<ApiGatewayRegion>>) -> Self {
-        let apikey = APIKey::load_apikey();
         let site = Self::url_site_from_url(url);
         ApiGatewayConfig {
             site,
             regions: regions.unwrap_or(ApiGatewayRegion::get_default_regions()),
-            access_key_id: Some(apikey.aws_api_id),
-            access_key_secret: Some(apikey.aws_api_secret),
+            access_key_id: None,
+            access_key_secret: None,
             verbose: true,
         }
     }
@@ -173,7 +169,7 @@ impl ApiGatewayConfig {
 pub struct ApiGateway {
     config: ApiGatewayConfig,
     api_name: String,
-    endpoints: Arc<Mutex<Vec<String>>>,
+    pub endpoints: Arc<Mutex<Vec<String>>>,
 }
 
 impl ApiGateway {
@@ -354,10 +350,7 @@ impl ApiGateway {
             // Get endpoints
             let endpoints = self.endpoints.lock().unwrap();
             if endpoints.is_empty() {
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "No endpoints available",
-                )));
+                return Err(Box::new(std::io::Error::other("No endpoints available")));
             }
 
             // Get random endpoint
@@ -370,10 +363,7 @@ impl ApiGateway {
             let protocol_split: Vec<&str> = url_str.split("://").collect();
 
             if protocol_split.len() != 2 {
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Invalid URL format",
-                )));
+                return Err(Box::new(std::io::Error::other("Invalid URL format")));
             }
 
             let site_path = protocol_split[1]
@@ -383,12 +373,8 @@ impl ApiGateway {
                 .join("/");
             let new_url = format!("https://{}/ProxyStage/{}", endpoint, site_path);
 
-            *request.url_mut() = reqwest::Url::parse(&new_url).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to parse URL: {}", e),
-                )
-            })?;
+            *request.url_mut() = reqwest::Url::parse(&new_url)
+                .map_err(|e| std::io::Error::other(format!("Failed to parse URL: {}", e)))?;
 
             // Replace host with endpoint host
             let headers = request.headers_mut();
@@ -437,10 +423,7 @@ impl ApiGateway {
             // Get endpoints
             let endpoints = self.endpoints.lock().unwrap();
             if endpoints.is_empty() {
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "No endpoints available",
-                )));
+                return Err(Box::new(std::io::Error::other("No endpoints available")));
             }
 
             // Get random endpoint
@@ -453,10 +436,7 @@ impl ApiGateway {
             let protocol_split: Vec<&str> = url_str.split("://").collect();
 
             if protocol_split.len() != 2 {
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Invalid URL format",
-                )));
+                return Err(Box::new(std::io::Error::other("Invalid URL format")));
             }
 
             let site_path = protocol_split[1]
@@ -466,12 +446,8 @@ impl ApiGateway {
                 .join("/");
             let new_url = format!("https://{}/ProxyStage/{}", endpoint, site_path);
 
-            *request.url_mut() = reqwest::Url::parse(&new_url).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to parse URL: {}", e),
-                )
-            })?;
+            *request.url_mut() = reqwest::Url::parse(&new_url)
+                .map_err(|e| std::io::Error::other(format!("Failed to parse URL: {}", e)))?;
 
             // Replace host with endpoint host
             let headers = request.headers_mut();
@@ -851,34 +827,6 @@ async fn delete_gateway(
     }
 
     deleted
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct APIKey {
-    aws_api_id: String,
-    aws_api_secret: String,
-}
-
-impl APIKey {
-    const PROJECT_KEY: &str = "SCTYS_PROJECT";
-    const API_KEY_PATH: &str = "Secret/secret_sctys_rust_utilities";
-    const API_KEY_FILE: &str = "request_ip_rotate_api.toml";
-
-    fn load_apikey() -> APIKey {
-        let full_api_path =
-            Path::new(&env::var(Self::PROJECT_KEY).expect("Unable to find project path"))
-                .join(Self::API_KEY_PATH)
-                .join(Self::API_KEY_FILE);
-        let api_str = match fs::read_to_string(full_api_path) {
-            Ok(api_str) => api_str,
-            Err(e) => panic!("Unable to load the api file. {e}"),
-        };
-        let api_key_data: APIKey = match toml::from_str(&api_str) {
-            Ok(api_data) => api_data,
-            Err(e) => panic!("Unable to parse the api file. {e}"),
-        };
-        api_key_data
-    }
 }
 
 #[allow(dead_code)]
