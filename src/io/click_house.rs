@@ -1,6 +1,7 @@
 use std::{path::Path, process::Command};
 
 use clickhouse::{error::Result, inserter::Inserter, query::RowCursor, Client, Row};
+use sea_query::{Alias, Asterisk, Expr, Func, MysqlQueryBuilder, Query};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{logger::ProjectLogger, secret::aws_secret::Secret, PROJECT};
@@ -189,7 +190,9 @@ impl<'a> ClickHouse<'a> {
         client: &Client,
         table_name: &str,
     ) -> Result<Vec<T>> {
-        let query_str = format!("SELECT * FROM {table_name}");
+        let mut query = Query::select();
+        query.column(Asterisk).from(Alias::new(table_name));
+        let query_str = query.to_string(MysqlQueryBuilder);
         self.query_table(client, query_str.as_str()).await
     }
 
@@ -210,7 +213,9 @@ impl<'a> ClickHouse<'a> {
         client: &Client,
         table_name: &str,
     ) -> Result<RowCursor<T>> {
-        let query_str = format!("SELECT * FROM {table_name}");
+        let mut query = Query::select();
+        query.column(Asterisk).from(Alias::new(table_name));
+        let query_str = query.to_string(MysqlQueryBuilder);
         self.query_rows_from_table(client, query_str.as_str())
     }
 
@@ -311,15 +316,20 @@ impl<'a> ClickHouse<'a> {
         table_name: &str,
         distinct_columns: Option<&[&str]>,
     ) -> usize {
-        let query_str = match distinct_columns {
+        let mut query = Query::select();
+        query.from(Alias::new(table_name));
+
+        match distinct_columns {
             Some(columns) => {
-                let columns_str = columns.join(", ");
-                format!("SELECT COUNT(DISTINCT ({columns_str})) FROM {table_name}")
+                let columns_exprs = columns.iter().map(|c| Expr::col(Alias::new(*c)).into());
+                query.expr(Func::count_distinct(Expr::tuple(columns_exprs)));
             }
             None => {
-                format!("SELECT DISTINCT COUNT(*) FROM {table_name}")
+                query.expr(Func::count(Expr::col(Asterisk))).distinct();
             }
-        };
+        }
+
+        let query_str = query.to_string(MysqlQueryBuilder);
         let count: usize = client.query(&query_str).fetch_one().await.unwrap_or(0);
         count
     }
@@ -330,7 +340,12 @@ impl<'a> ClickHouse<'a> {
         table_name: &str,
         filter_str: &str,
     ) -> bool {
-        let query_str = format!("SELECT 1 FROM {table_name} WHERE {filter_str} LIMIT 1");
+        let mut query = Query::select();
+        query.from(Alias::new(table_name));
+        query.expr(Expr::value(1)).and_where(Expr::cust(filter_str)).limit(1);
+        
+        let query_str = query.to_string(MysqlQueryBuilder);
+        dbg!(&query_str);
         !client
             .query(&query_str)
             .fetch_one::<u8>()
@@ -547,5 +562,73 @@ mod tests {
             .is_filter_empty(&client, table_name, filter_str)
             .await;
         dbg!(is_empty);
+    }
+
+    #[tokio::test]
+    async fn test_count_row_in_table_integration() {
+        let logger_name = "test_clickhouse_count";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_io");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        project_logger.set_logger(LevelFilter::Debug);
+        let secret = Secret::new(&project_logger).await;
+        let clickhouse = ClickHouse::new(&project_logger, &secret).await.unwrap();
+        let database = "test";
+        let clickhouse_client = clickhouse.create_database_client(database);
+        let table_name = "test_table";
+
+        // Test total count
+        let total_count = clickhouse
+            .count_row_in_table(&clickhouse_client, table_name, None)
+            .await;
+        println!("Total row count: {}", total_count);
+
+        // Test distinct count with single column
+        let distinct_venue = clickhouse
+            .count_row_in_table(&clickhouse_client, table_name, Some(&["Venue"]))
+            .await;
+        println!("Distinct Venues: {}", distinct_venue);
+
+        // Test distinct count with multiple columns (ClickHouse tuple syntax)
+        let multi_distinct = clickhouse
+            .count_row_in_table(&clickhouse_client, table_name, Some(&["Venue", "CourseID"]))
+            .await;
+        println!("Distinct Venue-CourseID pairs: {}", multi_distinct);
+    }
+    #[derive(Debug, clickhouse::Row, serde::Deserialize, serde::Serialize)]
+    struct TestDataRow {
+        #[serde(rename = "Venue")]
+        venue: String,
+        #[serde(rename = "SurfaceID")]
+        surface_id: i32,
+        #[serde(rename = "CourseID")]
+        course_id: String,
+        #[serde(rename = "HomeStraight")]
+        home_straight: Option<i32>,
+        #[serde(rename = "Width")]
+        width: f64,
+        insert_time: i64,
+    }
+
+    #[tokio::test]
+    async fn test_load_table() {
+        let logger_name = "test_clickhouse_load";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_io");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        project_logger.set_logger(LevelFilter::Debug);
+        let secret = Secret::new(&project_logger).await;
+        let clickhouse = ClickHouse::new(&project_logger, &secret).await.unwrap();
+        let database = "test";
+        let client = clickhouse.create_database_client(database);
+        let table_name = "test_table";
+
+        let rows: Vec<TestDataRow> = clickhouse.load_table(&client, table_name).await.unwrap();
+        println!("Loaded {} rows", rows.len());
+        if let Some(row) = rows.first() {
+            println!("First row: {:?}", row);
+        }
     }
 }
