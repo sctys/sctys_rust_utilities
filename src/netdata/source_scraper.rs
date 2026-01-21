@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    data_struct::{BrowseOptions, CurlCffiClient, RequestOptions, Response, ScraperError},
+    data_struct::{BrowseOptions, RequestOptions, Response, ScraperError},
     proxy::ScraperProxy,
     requests_ip_rotate::{ApiGateway, ApiGatewayConfig, ApiGatewayRegion},
 };
@@ -46,13 +46,6 @@ impl<'a> SourceScraper<'a> {
         let debug_str = "Rquest client initialized";
         self.logger.log_debug(debug_str);
         Ok(rquest_client)
-    }
-
-    pub fn get_curl_cffi_client(&self) -> Result<CurlCffiClient, ScraperError> {
-        let curl_cffi_client = CurlCffiClient::create_session()?;
-        let debug_str = "Curl cffi client initialized";
-        self.logger.log_debug(debug_str);
-        Ok(curl_cffi_client)
     }
 
     pub async fn get_playwright_client(&self) -> Result<Playwright, ScraperError> {
@@ -220,30 +213,6 @@ impl<'a> SourceScraper<'a> {
             request_builder.send().await?
         };
         Response::from_rquest_response(response).await
-    }
-
-    pub async fn request_with_curl_cffi(
-        &self,
-        url: &str,
-        request_options: &RequestOptions,
-        curl_cffi_client: &CurlCffiClient,
-        scraper_proxy: Option<&mut ScraperProxy<'a>>,
-    ) -> Result<Response, ScraperError> {
-        let debug_log = format!("Attempting to make a request to {} with curl_cffi", url);
-        self.logger.log_debug(&debug_log);
-        if let Some(scraper_proxy) = scraper_proxy {
-            let proxy_result = scraper_proxy.generate_proxy().await?;
-            let proxy = Some(proxy_result.get_http_address());
-            let py_response = curl_cffi_client.request(url, request_options, proxy)?;
-            let response = py_response.to_response()?;
-            if !request_options.allow_forbidden_proxy && response.status_code == 403 {
-                scraper_proxy.add_proxy_block_count(&proxy_result);
-            };
-            Ok(response)
-        } else {
-            let py_response = curl_cffi_client.request(url, request_options, None)?;
-            py_response.to_response()
-        }
     }
 
     pub async fn request_with_playwright(
@@ -906,44 +875,6 @@ mod tests {
                     &rquest_client,
                     Some(&mut scraper_proxy),
                     None,
-                )
-                .await
-                .unwrap();
-            dbg!(response);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_curl_cffi() {
-        let logger_name = "test_scraping";
-        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
-            .join("Log")
-            .join("log_sctys_netdata");
-        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
-        project_logger.set_logger(LevelFilter::Debug);
-        let secret = Secret::new(&project_logger).await;
-        let scraper = SourceScraper::new(&project_logger, &secret);
-        let url = "https://browserleaks.com/ip";
-        let request_options = RequestOptions {
-            connect_timeout: Duration::from_secs(5),
-            timeout: Duration::from_secs(15),
-            headers: None,
-            allow_forbidden_proxy: false,
-        };
-        let curl_cffi_client = scraper.get_curl_cffi_client().unwrap();
-        let response = scraper
-            .request_with_curl_cffi(url, &request_options, &curl_cffi_client, None)
-            .await
-            .unwrap();
-        dbg!(response);
-        let mut scraper_proxy = scraper.get_scraper_proxy().await.unwrap();
-        for _ in 0..3 {
-            let response = scraper
-                .request_with_curl_cffi(
-                    url,
-                    &request_options,
-                    &curl_cffi_client,
-                    Some(&mut scraper_proxy),
                 )
                 .await
                 .unwrap();

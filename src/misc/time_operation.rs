@@ -1,10 +1,11 @@
 use chrono::{
-    DateTime, Datelike, Duration as LongDuration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, ParseResult, TimeZone, Timelike, Utc
+    DateTime, Datelike, Duration as LongDuration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime,
+    ParseResult, TimeZone, Timelike, Utc,
 };
 use chrono_tz::Tz;
 use mongodb::bson::DateTime as BsonDateTime;
 use rand::SeedableRng;
-use rand::{thread_rng, Rng, rngs::StdRng};
+use rand::{rngs::StdRng, thread_rng, Rng};
 use std::thread;
 use std::time::{Duration, SystemTime};
 use tokio::time;
@@ -82,6 +83,11 @@ pub fn system_time_to_timestamp(system_time: &SystemTime, precision: SecPrecisio
         },
         Err(e) => panic!("Unable to convert the system time {system_time:?} to timestamp. {e}"),
     }
+}
+
+pub fn system_time_to_utc_time(system_time: &SystemTime) -> Option<DateTime<Utc>> {
+    let timestamp = system_time_to_timestamp(system_time, SecPrecision::Sec);
+    Utc.timestamp_opt(timestamp, 0).single()
 }
 
 pub fn diff_system_time_date_time_sec<T: TimeZone>(
@@ -253,8 +259,12 @@ pub fn naive_date_time_from_string(date_time_str: &str, fmt: &str) -> ParseResul
     NaiveDateTime::parse_from_str(date_time_str, fmt)
 }
 
-pub fn date_time_timezone_from_string(date_time_str: &str, fmt: &str) -> ParseResult<DateTime<FixedOffset>> {
-    DateTime::parse_from_rfc3339(date_time_str).or_else(|_| DateTime::parse_from_str(date_time_str, fmt))
+pub fn date_time_timezone_from_string(
+    date_time_str: &str,
+    fmt: &str,
+) -> ParseResult<DateTime<FixedOffset>> {
+    DateTime::parse_from_rfc3339(date_time_str)
+        .or_else(|_| DateTime::parse_from_str(date_time_str, fmt))
 }
 
 pub fn utc_date_range(start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<DateTime<Utc>> {

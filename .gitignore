@@ -17,3 +17,8 @@ Cargo.lock
 /src/netdata/netdata_pyenv
 __pycache__/
 *.pyc
+
+# JS files
+package-lock.json
+package.json
+/src/netdata/js/node_modules

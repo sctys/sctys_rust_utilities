@@ -2,19 +2,11 @@ use std::{collections::HashMap, error::Error, fmt::Display, time::Duration};
 
 use chrono::{DateTime, Utc};
 use playwright_rust::Playwright;
-use pyo3::{
-    exceptions::PyKeyboardInterrupt,
-    prelude::*,
-    types::{IntoPyDict, PyDict, PyTuple},
-};
 use reqwest::{header::HeaderMap, Url};
 
-use crate::{netdata::playwright_js_client::PlaywrightClient, python_utils::PythonPath};
+use crate::netdata::playwright_js_client::PlaywrightClient;
 
-use super::{
-    proxy::ProxyError,
-    python_struct::{NetdataPythonPath, PythonTxt},
-};
+use super::proxy::ProxyError;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct UrlFile {
@@ -51,7 +43,6 @@ pub enum ResponseCheckResult {
 
 pub enum ScraperClient<'a> {
     Rquest(&'a rquest::Client),
-    CurlCffi(&'a CurlCffiClient),
     Playwright(&'a Playwright),
     PlaywrightJs(&'a PlaywrightClient),
 }
@@ -59,7 +50,6 @@ pub enum ScraperClient<'a> {
 pub enum Scraper {
     Reqwest(bool),
     Rquest(bool),
-    CurlCffi,
     Playwright(BrowseOptions),
     PlaywrightJs,
 }
@@ -217,113 +207,10 @@ impl Response {
     }
 }
 
-#[derive(FromPyObject, Debug)]
-pub struct PyResponse {
-    content: String,
-    status_code: u16,
-    url: String,
-    ok: bool,
-    reason: String,
-    cookies: HashMap<String, String>,
-}
-
-impl PyResponse {
-    pub fn to_response(self) -> Result<Response, ScraperError> {
-        Ok(Response {
-            content: self.content,
-            status_code: self.status_code,
-            url: self.url,
-            ok: self.ok,
-            reason: self.reason,
-            cookies: self.cookies,
-        })
-    }
-}
-
-pub struct CurlCffiClient {
-    curl_cffi_session: Py<PyAny>,
-}
-
-impl Drop for CurlCffiClient {
-    fn drop(&mut self) {
-        Python::with_gil(|py| {
-            let _ = self.curl_cffi_session.call_method1(
-                py,
-                "__exit__",
-                (py.None(), py.None(), py.None()),
-            );
-        })
-    }
-}
-
-impl CurlCffiClient {
-    const CURL_CFFI_BROWSER: (&'static str, &'static str) = ("impersonate", "chrome");
-
-    pub fn create_session() -> Result<Self, ScraperError> {
-        NetdataPythonPath::setup_python_venv();
-        Python::with_gil(|py| -> PyResult<CurlCffiClient> {
-            let requests = py.import("curl_cffi.requests")?;
-            let kwargs = [Self::CURL_CFFI_BROWSER].into_py_dict(py)?;
-            let session_obj = requests.call_method("Session", (py.None(),), Some(&kwargs))?;
-            let session = session_obj.call_method0("__enter__")?;
-            Ok(Self {
-                curl_cffi_session: session.into(),
-            })
-        })
-        .map_err(ScraperError::from)
-    }
-
-    pub fn request(
-        &self,
-        url: &str,
-        request_options: &RequestOptions,
-        proxy: Option<String>,
-    ) -> Result<PyResponse, ScraperError> {
-        Python::with_gil(|py| {
-            if let Err(e) = py.check_signals() {
-                if e.is_instance_of::<PyKeyboardInterrupt>(py) {
-                    panic!("Received keyboard interrupt. Exiting");
-                }
-            }
-            NetdataPythonPath::append_script_path(&py)?;
-            let request_curl_cffi = py.import(PythonTxt::RequestCurlCffi.to_string())?;
-            let kwargs = PyDict::new(py);
-            let session = &self.curl_cffi_session;
-            let connect_timeout = request_options.connect_timeout.as_secs() as i64;
-            let read_timeout = request_options
-                .timeout
-                .saturating_sub(request_options.connect_timeout)
-                .as_secs() as i64;
-            kwargs.set_item(
-                PythonTxt::Timeout.to_string(),
-                PyTuple::new(py, [connect_timeout, read_timeout])?,
-            )?;
-            if let Some(headers) = &request_options.convert_header_map_to_map() {
-                kwargs.set_item(PythonTxt::Headers.to_string(), headers)?;
-            } else {
-                kwargs.set_item(
-                    PythonTxt::Headers.to_string(),
-                    HashMap::<String, String>::new(),
-                )?;
-            }
-            if let Some(proxy) = proxy {
-                kwargs.set_item(PythonTxt::Proxy.to_string(), proxy)?;
-            } else {
-                kwargs.set_item(PythonTxt::Proxy.to_string(), py.None())?;
-            }
-            let response = request_curl_cffi
-                .getattr(PythonTxt::RequestsWithCurlCffi.to_string())?
-                .call((session, url), Some(&kwargs))?;
-            Ok(response.extract::<PyResponse>()?)
-        })
-    }
-}
-
 #[derive(Debug)]
 pub enum ScraperError {
     Reqwest(reqwest::Error),
     Rquest(rquest::Error),
-    PyRequest(pyo3::PyErr),
     PyScraper(String),
     Proxy(ProxyError),
     Playwright(playwright_rust::Error),
@@ -339,7 +226,6 @@ impl Display for ScraperError {
         match self {
             ScraperError::Reqwest(e) => write!(f, "Reqwest error: {e}"),
             ScraperError::Rquest(e) => write!(f, "Rquest error: {e}"),
-            ScraperError::PyRequest(e) => write!(f, "PyRequest error: {e}"),
             ScraperError::PyScraper(e) => write!(f, "PyScraper error: {e}"),
             ScraperError::Proxy(e) => write!(f, "Proxy error: {e}"),
             ScraperError::Playwright(e) => write!(f, "Playwright error: {e}"),
@@ -363,12 +249,6 @@ impl From<reqwest::Error> for ScraperError {
 impl From<rquest::Error> for ScraperError {
     fn from(value: rquest::Error) -> Self {
         Self::Rquest(value)
-    }
-}
-
-impl From<pyo3::PyErr> for ScraperError {
-    fn from(value: pyo3::PyErr) -> Self {
-        Self::PyRequest(value)
     }
 }
 

@@ -1,5 +1,6 @@
 const { chromium } = require('playwright');
 const readline = require('readline');
+process.chdir(__dirname);
 
 // Global browser and context pool
 let browser = null;

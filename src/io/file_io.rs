@@ -5,13 +5,15 @@ use polars::frame::DataFrame;
 use polars::io::{SerReader, SerWriter};
 use polars::lazy::frame::{LazyCsvReader, LazyFrame, ScanArgsParquet};
 use polars::prelude::*;
+use serde::Serialize;
 use std::fs::{self, DirEntry};
 use std::fs::{File, ReadDir};
-use std::io::{Error, ErrorKind, Result};
+use std::io::{Cursor, Error, ErrorKind, Result};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
 use walkdir::WalkDir;
+
 
 #[derive(Debug)]
 pub struct FileIO<'a> {
@@ -381,7 +383,7 @@ impl<'a> FileIO<'a> {
         }
     }
 
-    fn get_last_modification_time(&self, full_path: &Path) -> Result<SystemTime> {
+    pub fn get_last_modification_time(&self, full_path: &Path) -> Result<SystemTime> {
         fs::metadata(full_path).map_or_else(
             |e| {
                 let error_str = format!(
@@ -609,6 +611,16 @@ impl<'a> FileIO<'a> {
                 Ok(())
             },
         )
+    }
+    
+    pub fn convert_structs_vec_to_data_frame<T: Serialize>(&self, data: &[T]) -> serde_json::Result<DataFrame> {
+        let json_data = serde_json::to_string(data)?;
+        let cursor = Cursor::new(json_data);
+        JsonReader::new(cursor).finish().map_err(|e| {
+            let error_str = format!("Unable to convert struct vec to data frame. {e}");
+            self.project_logger.log_error(&error_str);
+            serde::de::Error::custom(error_str)
+        })
     }
 
     // allow for more complicated loading options from the reader
@@ -1069,5 +1081,25 @@ mod tests {
         file_io
             .sink_parquet_file(&folder_path, new_file, data)
             .unwrap();
+    }
+    
+    #[derive(Debug, Serialize)]
+    struct TestStruct {
+        a: i32,
+        b: String,
+    }
+    
+    #[test]
+    fn test_convert_structs_vec_to_data_frame() {
+        let logger_name = "test_file_io";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_io");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        project_logger.set_logger(LevelFilter::Debug);
+        let file_io = FileIO::new(&project_logger);
+        let data = vec![TestStruct { a: 1, b: "test".to_string() }, TestStruct { a: 2, b: "test2".to_string() }];
+        let data_frame = file_io.convert_structs_vec_to_data_frame(&data).unwrap();
+        dbg!(data_frame);
     }
 }

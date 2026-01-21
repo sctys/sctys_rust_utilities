@@ -45,7 +45,7 @@ impl<'a> ClickHouse<'a> {
         client
     }
 
-    async fn sql_execution(&self, client: &Client, query_str: &str) -> Result<()> {
+    pub async fn sql_execution(&self, client: &Client, query_str: &str) -> Result<()> {
         client.query(query_str).execute().await.map_or_else(
             |e| {
                 let error_str = format!("Unable to query {query_str}. {e}");
