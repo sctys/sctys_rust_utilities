@@ -35,6 +35,10 @@ impl<'a> ClickHouse<'a> {
         })
     }
 
+    pub fn get_logger(&self) -> &'a ProjectLogger {
+        self.project_logger
+    }
+
     pub fn create_database_client(&self, database: &str) -> Client {
         let client = Client::default()
             .with_url(Self::DB_URL)

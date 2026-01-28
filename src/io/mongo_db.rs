@@ -22,6 +22,10 @@ impl<'a> MongoDB<'a> {
     pub fn new(project_logger: &'a ProjectLogger) -> Self {
         Self { project_logger }
     }
+    
+    pub fn get_logger(&self) -> &'a ProjectLogger {
+        self.project_logger
+    }
 
     pub async fn create_connection(&self) -> Result<Client> {
         Client::with_uri_str(Self::DB_URL).await.map_or_else(

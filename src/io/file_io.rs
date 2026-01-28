@@ -25,6 +25,10 @@ impl<'a> FileIO<'a> {
         Self { project_logger }
     }
 
+    pub fn get_logger(&self) -> &'a ProjectLogger {
+        self.project_logger
+    }
+
     pub fn check_folder_exist(folder_path: &Path) -> bool {
         folder_path.is_dir()
     }

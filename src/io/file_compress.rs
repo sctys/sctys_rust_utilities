@@ -15,6 +15,10 @@ impl<'a> FileCompress<'a> {
         Self { project_logger }
     }
 
+    pub fn get_logger(&self) -> &'a ProjectLogger {
+        self.project_logger
+    }
+
     pub fn get_gz_compressor(
         &self,
         folder_path: &Path,

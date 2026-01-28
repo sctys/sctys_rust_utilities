@@ -18,7 +18,7 @@ const JS_HEADER_INTERCEPION: &str = include_str!("./js/header_interception.js");
 const LETSENCRYPT_R13_CERT: &[u8] = include_bytes!("letsencrypt_r13.pem");
 
 pub struct SourceScraper<'a> {
-    pub logger: &'a ProjectLogger,
+    logger: &'a ProjectLogger,
     secret: &'a Secret<'a>,
 }
 
@@ -29,6 +29,10 @@ impl<'a> SourceScraper<'a> {
 
     pub fn new(logger: &'a ProjectLogger, secret: &'a Secret) -> Self {
         Self { logger, secret }
+    }
+    
+    pub fn get_logger(&self) -> &'a ProjectLogger {
+        self.logger
     }
 
     pub async fn get_scraper_proxy(&self) -> Result<ScraperProxy<'a>, ScraperError> {

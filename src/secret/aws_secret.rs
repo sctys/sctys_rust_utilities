@@ -26,6 +26,10 @@ impl<'a> Secret<'a> {
             client: ssm,
         }
     }
+    
+    pub fn get_logger(&self) -> &'a ProjectLogger {
+        self.project_logger
+    }
 
     pub async fn get_secret_value(
         &self,

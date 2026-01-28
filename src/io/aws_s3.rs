@@ -46,6 +46,10 @@ impl<'a> AWSFileIO<'a> {
             client,
         }
     }
+    
+    pub fn get_logger(&self) -> &'a ProjectLogger {
+        self.project_logger
+    }
 
     fn add_stash_for_folder_suffix(folder_name: &Path) -> PathBuf {
         if folder_name

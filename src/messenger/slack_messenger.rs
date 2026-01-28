@@ -53,6 +53,10 @@ impl<'a> SlackMessenger<'a> {
             retry_sleep: RETRY_SLEEP,
         })
     }
+    
+    pub fn get_logger(&self) -> &'a ProjectLogger {
+        self.logger
+    }
 
     pub fn get_channel_id(&self, channel: &Channel) -> &str {
         match channel {
