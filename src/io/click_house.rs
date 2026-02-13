@@ -349,7 +349,6 @@ impl<'a> ClickHouse<'a> {
         query.expr(Expr::value(1)).and_where(Expr::cust(filter_str)).limit(1);
         
         let query_str = query.to_string(MysqlQueryBuilder);
-        dbg!(&query_str);
         !client
             .query(&query_str)
             .fetch_one::<u8>()

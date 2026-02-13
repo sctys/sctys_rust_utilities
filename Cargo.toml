@@ -18,7 +18,6 @@ bzip2 = "0.4"
 chrono = "0.4"
 chrono-tz = "0.8"
 clickhouse = {version = "0.13", features = ["inserter"]}
-duckdb = {version = "1.2", features = ["bundled", "parquet"]}
 flate2 = "1"
 futures = "0.3"
 fxhash = "0.2"
@@ -29,7 +28,6 @@ playwright-rust = { path = "../playwright-rust" }
 polars = {version = "0.45", features = ["lazy", "temporal", "describe", "json", "parquet", "dtype-datetime", "streaming"]}
 mongodb = "3.2"
 rand = {version = "0.8.5", features = ["std"]}
-redis = "1.0"
 reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots", "gzip", "cookies"]}
 rquest = {version ="5", features = ["cookies"]}
 rquest-util = "2"
