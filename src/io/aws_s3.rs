@@ -46,7 +46,7 @@ impl<'a> AWSFileIO<'a> {
             client,
         }
     }
-    
+
     pub fn get_logger(&self) -> &'a ProjectLogger {
         self.project_logger
     }

@@ -22,7 +22,7 @@ impl<'a> MongoDB<'a> {
     pub fn new(project_logger: &'a ProjectLogger) -> Self {
         Self { project_logger }
     }
-    
+
     pub fn get_logger(&self) -> &'a ProjectLogger {
         self.project_logger
     }

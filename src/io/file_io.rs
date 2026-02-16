@@ -14,7 +14,6 @@ use std::process::{Command, Stdio};
 use std::time::SystemTime;
 use walkdir::WalkDir;
 
-
 #[derive(Debug)]
 pub struct FileIO<'a> {
     project_logger: &'a ProjectLogger,
@@ -616,8 +615,11 @@ impl<'a> FileIO<'a> {
             },
         )
     }
-    
-    pub fn convert_structs_vec_to_data_frame<T: Serialize>(&self, data: &[T]) -> serde_json::Result<DataFrame> {
+
+    pub fn convert_structs_vec_to_data_frame<T: Serialize>(
+        &self,
+        data: &[T],
+    ) -> serde_json::Result<DataFrame> {
         let json_data = serde_json::to_string(data)?;
         let cursor = Cursor::new(json_data);
         JsonReader::new(cursor).finish().map_err(|e| {
@@ -1086,13 +1088,13 @@ mod tests {
             .sink_parquet_file(&folder_path, new_file, data)
             .unwrap();
     }
-    
+
     #[derive(Debug, Serialize)]
     struct TestStruct {
         a: i32,
         b: String,
     }
-    
+
     #[test]
     fn test_convert_structs_vec_to_data_frame() {
         let logger_name = "test_file_io";
@@ -1102,7 +1104,16 @@ mod tests {
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         project_logger.set_logger(LevelFilter::Debug);
         let file_io = FileIO::new(&project_logger);
-        let data = vec![TestStruct { a: 1, b: "test".to_string() }, TestStruct { a: 2, b: "test2".to_string() }];
+        let data = vec![
+            TestStruct {
+                a: 1,
+                b: "test".to_string(),
+            },
+            TestStruct {
+                a: 2,
+                b: "test2".to_string(),
+            },
+        ];
         let data_frame = file_io.convert_structs_vec_to_data_frame(&data).unwrap();
         dbg!(data_frame);
     }

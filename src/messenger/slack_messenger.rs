@@ -53,12 +53,12 @@ impl<'a> SlackMessenger<'a> {
             retry_sleep: RETRY_SLEEP,
         })
     }
-    
+
     pub fn get_logger(&self) -> &'a ProjectLogger {
         self.logger
     }
 
-    pub fn get_channel_id(&self, channel: &Channel) -> &str {
+    pub fn get_channel_id(&self, channel: Channel) -> &str {
         match channel {
             Channel::Report => &self.report_channel_id,
             Channel::Error => &self.error_channel_id,
@@ -74,7 +74,7 @@ impl<'a> SlackMessenger<'a> {
         self.retry_sleep = retry_sleep;
     }
 
-    pub async fn retry_send_message(&self, caller: &str, message: &str, channel: &Channel) {
+    pub async fn retry_send_message(&self, caller: &str, message: &str, channel: Channel) {
         let channel_id = self.get_channel_id(channel);
         let client = Client::new();
         let full_message = format!("Message sending from {caller}:\n\n{message}");
@@ -105,6 +105,7 @@ impl<'a> SlackMessenger<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Channel {
     Report,
     Error,
@@ -145,7 +146,7 @@ mod tests {
         .unwrap();
         let calling_func = utilities_function::function_name!(true);
         slack_messenger
-            .retry_send_message(calling_func, "Test message from rust", &Channel::Report)
+            .retry_send_message(calling_func, "Test message from rust", Channel::Report)
             .await;
     }
 }

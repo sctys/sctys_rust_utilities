@@ -346,8 +346,11 @@ impl<'a> ClickHouse<'a> {
     ) -> bool {
         let mut query = Query::select();
         query.from(Alias::new(table_name));
-        query.expr(Expr::value(1)).and_where(Expr::cust(filter_str)).limit(1);
-        
+        query
+            .expr(Expr::value(1))
+            .and_where(Expr::cust(filter_str))
+            .limit(1);
+
         let query_str = query.to_string(MysqlQueryBuilder);
         !client
             .query(&query_str)
@@ -429,10 +432,11 @@ mod tests {
 
     use log::LevelFilter;
     use strum::VariantArray;
+    use strum_macros::{Display, VariantArray};
 
     use super::*;
 
-    #[derive(Debug, strum_macros::Display, VariantArray)]
+    #[derive(Debug, Display, VariantArray)]
     pub enum TestDataCol {
         Venue,
         SurfaceID,

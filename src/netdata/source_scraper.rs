@@ -30,7 +30,7 @@ impl<'a> SourceScraper<'a> {
     pub fn new(logger: &'a ProjectLogger, secret: &'a Secret) -> Self {
         Self { logger, secret }
     }
-    
+
     pub fn get_logger(&self) -> &'a ProjectLogger {
         self.logger
     }
