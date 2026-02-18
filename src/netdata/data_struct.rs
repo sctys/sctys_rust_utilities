@@ -141,6 +141,22 @@ impl RequestOptions {
         }
         headers
     }
+    
+    pub fn insert_to_header_map(&mut self, key: &'static str, value: String) {
+        let header_value = value
+            .parse()
+            .unwrap_or_else(|e| panic!("Unable to parse header value {value}. {e}"));
+        match self.headers.as_mut() {
+            Some(headers) => {
+                headers.insert(key, header_value);
+            },
+            None => {
+                let mut headers = HeaderMap::new();
+                headers.insert(key, header_value);
+                self.headers = Some(headers);
+            }
+        }
+    }
 }
 
 pub struct BrowseOptions {
