@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use playwright_rust::Playwright;
 use reqwest::{header::HeaderMap, Url};
 
-use crate::netdata::playwright_js_client::PlaywrightClient;
+use crate::netdata::{capsolver::CapSolverError, playwright_js_client::PlaywrightClient};
 
 use super::proxy::ProxyError;
 
@@ -141,7 +141,7 @@ impl RequestOptions {
         }
         headers
     }
-    
+
     pub fn insert_to_header_map(&mut self, key: &'static str, value: String) {
         let header_value = value
             .parse()
@@ -149,7 +149,7 @@ impl RequestOptions {
         match self.headers.as_mut() {
             Some(headers) => {
                 headers.insert(key, header_value);
-            },
+            }
             None => {
                 let mut headers = HeaderMap::new();
                 headers.insert(key, header_value);
@@ -229,6 +229,7 @@ pub enum ScraperError {
     Rquest(rquest::Error),
     PyScraper(String),
     Proxy(ProxyError),
+    CapSolver(CapSolverError),
     Playwright(playwright_rust::Error),
     SerdeJsonError(serde_json::Error),
     IoError(std::io::Error),
@@ -244,6 +245,7 @@ impl Display for ScraperError {
             ScraperError::Rquest(e) => write!(f, "Rquest error: {e}"),
             ScraperError::PyScraper(e) => write!(f, "PyScraper error: {e}"),
             ScraperError::Proxy(e) => write!(f, "Proxy error: {e}"),
+            ScraperError::CapSolver(e) => write!(f, "CapSolver error: {e}"),
             ScraperError::Playwright(e) => write!(f, "Playwright error: {e}"),
             ScraperError::SerdeJsonError(e) => write!(f, "SerdeJsonError error: {e}"),
             ScraperError::IoError(e) => write!(f, "IO error: {e}"),
@@ -271,6 +273,12 @@ impl From<rquest::Error> for ScraperError {
 impl From<ProxyError> for ScraperError {
     fn from(value: ProxyError) -> Self {
         Self::Proxy(value)
+    }
+}
+
+impl From<CapSolverError> for ScraperError {
+    fn from(value: CapSolverError) -> Self {
+        Self::CapSolver(value)
     }
 }
 

@@ -429,7 +429,6 @@ impl From<InvalidHeaderValue> for ProxyError {
     }
 }
 
-#[derive(Deserialize)]
 struct ProxyConfig {
     proxy_list_url: String,
     plan_url: String,

@@ -29,7 +29,7 @@ polars = {version = "0.45", features = ["lazy", "temporal", "describe", "json", 
 mongodb = "3.2"
 rand = {version = "0.8.5", features = ["std"]}
 reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots", "gzip", "cookies"]}
-rquest = {version ="5", features = ["cookies"]}
+rquest = {version ="5", features = ["cookies", "json"]}
 rquest-util = "2"
 scraper = "0.14.0"
 sea-query = { version = "0.32", features = ["thread-safe"] }
