@@ -1,7 +1,7 @@
 use std::{path::Path, process::Command};
 
 use clickhouse::{error::Result, inserter::Inserter, query::RowCursor, Client, Row};
-use sea_query::{Alias, Asterisk, Expr, Func, MysqlQueryBuilder, Query};
+use sea_query::{Alias, Asterisk, Expr, Func, MysqlQueryBuilder, Query, SimpleExpr};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{logger::ProjectLogger, secret::aws_secret::Secret, PROJECT};
@@ -423,6 +423,25 @@ impl ClickHouseType {
                 }
             }
         }
+    }
+}
+
+pub struct ClickHouseFunc;
+
+impl ClickHouseFunc {
+    pub fn insert_time_col() -> Alias {
+        Alias::new(ClickHouse::INSERT_TIME)
+    }
+
+    pub fn to_int32<E>(expr: E) -> SimpleExpr
+    where
+        E: Into<SimpleExpr>,
+    {
+        Expr::cust_with_exprs("toInt32(?)", [expr.into()])
+    }
+
+    pub fn replace_union_with_union_distinct(query_str: String) -> String {
+        query_str.replace(" UNION ", " UNION DISTINCT ")
     }
 }
 
