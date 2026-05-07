@@ -170,7 +170,7 @@ impl<'a> SourceScraper<'a> {
                     e
                 }
             })?;
-            if !request_options.allow_forbidden_proxy
+            if request_options.proxy_block_count > 0
                 && response.status() == reqwest::StatusCode::FORBIDDEN
             {
                 scraper_proxy.add_proxy_block_count(&proxy_result);
@@ -220,7 +220,7 @@ impl<'a> SourceScraper<'a> {
                     e
                 }
             })?;
-            if !request_options.allow_forbidden_proxy
+            if request_options.proxy_block_count > 0
                 && response.status() == rquest::StatusCode::FORBIDDEN
             {
                 scraper_proxy.add_proxy_block_count(&proxy_result);
@@ -335,7 +335,7 @@ impl<'a> SourceScraper<'a> {
                                 .map_err(playwright_rust::Error::from)?;
                         }
                         time_operation::async_sleep(browser_options.browser_wait).await;
-                        if !request_options.allow_forbidden_proxy && status_code == 403 {
+                        if request_options.proxy_block_count > 0 && status_code == 403 {
                             scraper_proxy.add_proxy_block_count(&proxy_result);
                         }
                         let response = {
@@ -518,7 +518,7 @@ impl<'a> SourceScraper<'a> {
                 Some(request_options.timeout.as_millis() as u64),
             ) {
                 Ok(response) => {
-                    if !request_options.allow_forbidden_proxy && response.status_code == 403 {
+                    if request_options.proxy_block_count > 0 && response.status_code == 403 {
                         scraper_proxy.add_proxy_block_count(&proxy_result);
                     }
                     playwright.close_context(&context_id)?;
@@ -620,12 +620,7 @@ mod tests {
         let secret = Secret::new(&project_logger).await;
         let scraper = SourceScraper::new(&project_logger, &secret);
         let url = "https://browserleaks.com/ip";
-        let request_options = RequestOptions {
-            connect_timeout: Duration::from_secs(5),
-            timeout: Duration::from_secs(15),
-            headers: None,
-            allow_forbidden_proxy: false,
-        };
+        let request_options = RequestOptions::default();
         let response = scraper
             .request_with_reqwest(url, &request_options, None, None)
             .await
@@ -660,12 +655,7 @@ mod tests {
         let secret = Secret::new(&project_logger).await;
         let scraper = SourceScraper::new(&project_logger, &secret);
         let url = "https://browserleaks.com/ip";
-        let request_options = RequestOptions {
-            connect_timeout: Duration::from_secs(5),
-            timeout: Duration::from_secs(15),
-            headers: None,
-            allow_forbidden_proxy: false,
-        };
+        let request_options = RequestOptions::default();
         let rquest_client = scraper
             .get_rquest_client(request_options.connect_timeout)
             .unwrap();
@@ -715,12 +705,7 @@ mod tests {
         let secret = Secret::new(&project_logger).await;
         let scraper = SourceScraper::new(&project_logger, &secret);
         let url = "https://browserleaks.com/ip";
-        let request_options = RequestOptions {
-            connect_timeout: Duration::from_secs(5),
-            timeout: Duration::from_secs(15),
-            headers: None,
-            allow_forbidden_proxy: false,
-        };
+        let request_options = RequestOptions::default();
         let browse_options = BrowseOptions {
             headless: true,
             browser_wait: Duration::from_secs(3),
@@ -759,12 +744,7 @@ mod tests {
         let secret = Secret::new(&project_logger).await;
         let scraper = SourceScraper::new(&project_logger, &secret);
         let url = "https://browserleaks.com/ip";
-        let request_options = RequestOptions {
-            connect_timeout: Duration::from_secs(5),
-            timeout: Duration::from_secs(15),
-            headers: None,
-            allow_forbidden_proxy: false,
-        };
+        let request_options = RequestOptions::default();
         let browse_options = BrowseOptions {
             headless: true,
             browser_wait: Duration::from_secs(3),
@@ -789,12 +769,7 @@ mod tests {
         let secret = Secret::new(&project_logger).await;
         let scraper = SourceScraper::new(&project_logger, &secret);
         let url = "https://browserleaks.com/ip";
-        let request_options = RequestOptions {
-            connect_timeout: Duration::from_secs(5),
-            timeout: Duration::from_secs(15),
-            headers: None,
-            allow_forbidden_proxy: false,
-        };
+        let request_options = RequestOptions::default();
         let (original_domain, new_domain) = scraper.get_update_domain(url, &request_options).await;
         dbg!(original_domain);
         dbg!(new_domain);

@@ -26,10 +26,10 @@ pub struct ScraperProxy<'a> {
     last_update: Option<i64>,
     next_refresh_time: Option<i64>,
     proxy_config: ProxyConfig,
+    block_count: u8,
 }
 
 impl<'a> ScraperProxy<'a> {
-    const BLOCK_COUNT: u8 = 3;
     const REFRESH_PERIOD: LongDuration = LongDuration::minutes(30);
 
     pub async fn new(logger: &'a ProjectLogger, secret: &Secret<'a>) -> Result<Self, ProxyError> {
@@ -42,6 +42,7 @@ impl<'a> ScraperProxy<'a> {
             last_update: None,
             next_refresh_time: None,
             proxy_config,
+            block_count: 0,
         })
     }
 
@@ -56,15 +57,7 @@ impl<'a> ScraperProxy<'a> {
             self.logger.log_error(&error_str);
             e
         })?;
-        self.full_proxy_list = proxy_list
-            .into_iter()
-            .filter(|proxy| !self.is_proxy_blocked(proxy))
-            .collect();
-        if self.full_proxy_list.is_empty() {
-            let error_str = "Proxy list is empty. All proxies are blocked";
-            self.logger.log_error(error_str);
-            panic!("{error_str}");
-        }
+        self.apply_full_proxy_list(proxy_list)?;
         self.last_update = Some(Utc::now().timestamp());
         self.reset_active_list();
         let debug_str = format!(
@@ -74,6 +67,19 @@ impl<'a> ScraperProxy<'a> {
             self.next_refresh_time
         );
         self.logger.log_debug(&debug_str);
+        Ok(())
+    }
+
+    fn apply_full_proxy_list(&mut self, proxy_list: Vec<ProxyResult>) -> Result<(), ProxyError> {
+        self.full_proxy_list = proxy_list
+            .into_iter()
+            .filter(|proxy| !self.is_proxy_blocked(proxy))
+            .collect();
+        if self.full_proxy_list.is_empty() {
+            let error_str = "Proxy list is empty. All proxies are blocked";
+            self.logger.log_error(error_str);
+            return Err(ProxyError::NoValidProxy(error_str.to_string()));
+        }
         Ok(())
     }
 
@@ -110,11 +116,15 @@ impl<'a> ScraperProxy<'a> {
             .or_insert(1);
     }
 
+    pub fn set_block_count(&mut self, block_count: u8) {
+        self.block_count = block_count;
+    }
+
     fn is_proxy_blocked(&self, proxy: &ProxyResult) -> bool {
         let proxy_address = proxy.get_http_address();
         self.block_proxy_dict
             .get(&proxy_address)
-            .is_some_and(|count| *count >= Self::BLOCK_COUNT)
+            .is_some_and(|count| self.block_count > 0 && *count >= self.block_count)
     }
 
     async fn maybe_refresh_list(&mut self) -> Result<(), ProxyError> {
@@ -486,19 +496,75 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
-    async fn test_generate_proxy() {
+    fn build_test_logger() -> ProjectLogger {
         let logger_name = "test_proxy";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
             .join("log_sctys_proxy");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         project_logger.set_logger(LevelFilter::Debug);
+        project_logger
+    }
+
+    fn build_test_scraper_proxy<'a>(logger: &'a ProjectLogger) -> ScraperProxy<'a> {
+        ScraperProxy {
+            logger,
+            full_proxy_list: Vec::new(),
+            active_proxy_list: Vec::new(),
+            block_proxy_dict: FxHashMap::default(),
+            last_update: None,
+            next_refresh_time: None,
+            proxy_config: ProxyConfig {
+                proxy_list_url: "http://localhost/proxy_list".to_string(),
+                plan_url: "http://localhost/plan/".to_string(),
+                proxy_token: "token".to_string(),
+            },
+            block_count: 0,
+        }
+    }
+
+    fn build_proxy(address: &str) -> ProxyResult {
+        ProxyResult {
+            username: "user".to_string(),
+            password: "pass".to_string(),
+            proxy_address: address.to_string(),
+            port: 8000,
+            valid: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_generate_proxy() {
+        let project_logger = build_test_logger();
         let secret = Secret::new(&project_logger).await;
         let mut scraper_proxy = ScraperProxy::new(&project_logger, &secret).await.unwrap();
         for _ in 0..3 {
             let proxy = scraper_proxy.generate_proxy().await.unwrap();
             dbg!(proxy);
         }
+    }
+
+    #[test]
+    fn test_apply_full_proxy_list_returns_error_when_empty() {
+        let project_logger = build_test_logger();
+        let mut scraper_proxy = build_test_scraper_proxy(&project_logger);
+        let proxy = build_proxy("127.0.0.1");
+        scraper_proxy.set_block_count(1);
+        scraper_proxy.add_proxy_block_count(&proxy);
+        let result = scraper_proxy.apply_full_proxy_list(vec![proxy]);
+        assert!(matches!(result, Err(ProxyError::NoValidProxy(_))));
+    }
+
+    #[test]
+    fn test_set_block_count_changes_blocking_threshold() {
+        let project_logger = build_test_logger();
+        let mut scraper_proxy = build_test_scraper_proxy(&project_logger);
+        let proxy = build_proxy("127.0.0.2");
+
+        scraper_proxy.add_proxy_block_count(&proxy);
+        assert!(!scraper_proxy.is_proxy_blocked(&proxy));
+
+        scraper_proxy.set_block_count(1);
+        assert!(scraper_proxy.is_proxy_blocked(&proxy));
     }
 }

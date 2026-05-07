@@ -104,7 +104,7 @@ pub struct RequestOptions {
     pub connect_timeout: Duration,
     pub timeout: Duration,
     pub headers: Option<HeaderMap>,
-    pub allow_forbidden_proxy: bool,
+    pub proxy_block_count: u8,
 }
 
 impl Default for RequestOptions {
@@ -113,7 +113,7 @@ impl Default for RequestOptions {
             connect_timeout: RequestOptions::DEFAULT_CONNECT_TIMEOUT,
             timeout: RequestOptions::DEFAULT_TIMEOUT,
             headers: None,
-            allow_forbidden_proxy: false,
+            proxy_block_count: 0,
         }
     }
 }
