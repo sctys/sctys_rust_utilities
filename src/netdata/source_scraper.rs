@@ -55,14 +55,41 @@ impl<'a> SourceScraper<'a> {
         Ok(cap_solver)
     }
 
-    pub fn get_rquest_client(&self, timeout: Duration) -> Result<rquest::Client, ScraperError> {
+    pub fn get_rquest_client(
+        &self,
+        request_options: &RequestOptions,
+    ) -> Result<rquest::Client, ScraperError> {
+        let read_timeout = Self::get_read_timeout(
+            request_options.timeout,
+            request_options.connect_timeout,
+            "Invalid rquest timeout config. timeout must be greater than connect_timeout",
+        )?;
         let rquest_client = rquest::Client::builder()
             .emulation(Self::RQUEST_BROWSER)
-            .connect_timeout(timeout)
+            .connect_timeout(request_options.connect_timeout)
+            .timeout(request_options.timeout)
+            .read_timeout(read_timeout)
             .build()?;
         let debug_str = "Rquest client initialized";
         self.logger.log_debug(debug_str);
         Ok(rquest_client)
+    }
+
+    fn get_read_timeout(
+        timeout: Duration,
+        connect_timeout: Duration,
+        err_msg: &str,
+    ) -> Result<Duration, ScraperError> {
+        timeout
+            .checked_sub(connect_timeout)
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| ScraperError::Timeout(err_msg.to_string()))
+    }
+
+    fn get_outer_timeout(timeout: Duration) -> Result<Duration, ScraperError> {
+        timeout
+            .checked_mul(2)
+            .ok_or_else(|| ScraperError::Timeout("Outer timeout overflow".to_string()))
     }
 
     pub async fn get_playwright_client(&self) -> Result<Playwright, ScraperError> {
@@ -140,36 +167,47 @@ impl<'a> SourceScraper<'a> {
         let debug_log = format!("Attempting to make a request to {} with reqwest", url);
         self.logger.log_debug(&debug_log);
         let cert = reqwest::Certificate::from_pem(LETSENCRYPT_R13_CERT)?;
+        let read_timeout = Self::get_read_timeout(
+            request_options.timeout,
+            request_options.connect_timeout,
+            "Invalid reqwest timeout config. timeout must be greater than connect_timeout",
+        )?;
+        let outer_timeout = Self::get_outer_timeout(request_options.timeout)?;
         let mut client_builder = reqwest::ClientBuilder::new()
             .add_root_certificate(cert)
             .connect_timeout(request_options.connect_timeout)
-            .timeout(request_options.timeout);
+            .timeout(request_options.timeout)
+            .read_timeout(read_timeout);
         if let Some(headers) = &request_options.headers {
             client_builder = client_builder.default_headers(headers.clone());
         }
         let response = if let Some(api_gateway) = gateway {
             let client = client_builder.build()?;
             let request = client.get(url).build()?;
-            api_gateway
-                .reqwest_send(&client, request)
+            tokio::time::timeout(outer_timeout, api_gateway.reqwest_send(&client, request))
                 .await
+                .map_err(|_| ScraperError::Timeout(format!("reqwest send timed out for {url}")))?
                 .map_err(ScraperError::from)?
         } else if let Some(scraper_proxy) = scraper_proxy {
             let proxy_result = scraper_proxy.generate_proxy().await?;
             let proxy = proxy_result.get_reqwest_proxy()?;
             client_builder = client_builder.proxy(proxy);
-            let response = client_builder.build()?.get(url).send().await.map_err(|e| {
-                if e.is_timeout() {
-                    let warn_str = format!(
-                        "Proxy request {}:{} timed out",
-                        proxy_result.proxy_address, proxy_result.port
-                    );
-                    self.logger.log_warn(&warn_str);
-                    e
-                } else {
-                    e
-                }
-            })?;
+            let response =
+                tokio::time::timeout(outer_timeout, client_builder.build()?.get(url).send())
+                    .await
+                    .map_err(|_| ScraperError::Timeout(format!("reqwest send timed out for {url}")))?
+                    .map_err(|e| {
+                        if e.is_timeout() {
+                            let warn_str = format!(
+                                "Proxy request {}:{} timed out",
+                                proxy_result.proxy_address, proxy_result.port
+                            );
+                            self.logger.log_warn(&warn_str);
+                            e
+                        } else {
+                            e
+                        }
+                    })?;
             if request_options.proxy_block_count > 0
                 && response.status() == reqwest::StatusCode::FORBIDDEN
             {
@@ -177,9 +215,11 @@ impl<'a> SourceScraper<'a> {
             };
             response
         } else {
-            client_builder.build()?.get(url).send().await?
+            tokio::time::timeout(outer_timeout, client_builder.build()?.get(url).send())
+                .await
+                .map_err(|_| ScraperError::Timeout(format!("reqwest send timed out for {url}")))??
         };
-        Response::from_reqwest_response(response).await
+        Response::from_reqwest_response(response, request_options.timeout).await
     }
 
     pub async fn request_with_rquest(
@@ -192,6 +232,7 @@ impl<'a> SourceScraper<'a> {
     ) -> Result<Response, ScraperError> {
         let debug_log = format!("Attempting to make a request to {} with rquest", url);
         self.logger.log_debug(&debug_log);
+        let outer_timeout = Self::get_outer_timeout(request_options.timeout)?;
         let mut request_builder = client.get(url);
         if let Some(headers) = &request_options.headers {
             request_builder = request_builder
@@ -200,26 +241,29 @@ impl<'a> SourceScraper<'a> {
         }
         let response = if let Some(api_gateway) = api_gateway {
             let request = request_builder.build()?;
-            api_gateway
-                .rquest_send(client, request)
+            tokio::time::timeout(outer_timeout, api_gateway.rquest_send(client, request))
                 .await
+                .map_err(|_| ScraperError::Timeout(format!("rquest send timed out for {url}")))?
                 .map_err(ScraperError::from)?
         } else if let Some(scraper_proxy) = scraper_proxy {
             let proxy_result = scraper_proxy.generate_proxy().await?;
             let proxy = proxy_result.get_rquest_proxy()?;
             request_builder = request_builder.proxy(proxy);
-            let response = request_builder.send().await.map_err(|e| {
-                if e.is_timeout() {
-                    let warn_str = format!(
-                        "Proxy request {}:{} timed out",
-                        proxy_result.proxy_address, proxy_result.port
-                    );
-                    self.logger.log_warn(&warn_str);
-                    e
-                } else {
-                    e
-                }
-            })?;
+            let response = tokio::time::timeout(outer_timeout, request_builder.send())
+                .await
+                .map_err(|_| ScraperError::Timeout(format!("rquest send timed out for {url}")))?
+                .map_err(|e| {
+                    if e.is_timeout() {
+                        let warn_str = format!(
+                            "Proxy request {}:{} timed out",
+                            proxy_result.proxy_address, proxy_result.port
+                        );
+                        self.logger.log_warn(&warn_str);
+                        e
+                    } else {
+                        e
+                    }
+                })?;
             if request_options.proxy_block_count > 0
                 && response.status() == rquest::StatusCode::FORBIDDEN
             {
@@ -227,9 +271,11 @@ impl<'a> SourceScraper<'a> {
             };
             response
         } else {
-            request_builder.send().await?
+            tokio::time::timeout(outer_timeout, request_builder.send())
+                .await
+                .map_err(|_| ScraperError::Timeout(format!("rquest send timed out for {url}")))??
         };
-        Response::from_rquest_response(response).await
+        Response::from_rquest_response(response, request_options.timeout).await
     }
 
     pub async fn request_with_playwright(
@@ -657,7 +703,7 @@ mod tests {
         let url = "https://browserleaks.com/ip";
         let request_options = RequestOptions::default();
         let rquest_client = scraper
-            .get_rquest_client(request_options.connect_timeout)
+            .get_rquest_client(&request_options)
             .unwrap();
         let response = scraper
             .request_with_rquest(url, &request_options, &rquest_client, None, None)

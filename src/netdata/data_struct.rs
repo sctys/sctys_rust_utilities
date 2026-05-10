@@ -176,7 +176,10 @@ pub struct Response {
 }
 
 impl Response {
-    pub async fn from_reqwest_response(response: reqwest::Response) -> Result<Self, ScraperError> {
+    pub async fn from_reqwest_response(
+        response: reqwest::Response,
+        body_timeout: Duration,
+    ) -> Result<Self, ScraperError> {
         let status_code = response.status().as_u16();
         let url = response.url().to_string();
         let ok = response.status().is_success();
@@ -189,8 +192,11 @@ impl Response {
             .cookies()
             .map(|c| (c.name().to_string(), c.value().to_string()))
             .collect();
+        let content = tokio::time::timeout(body_timeout, response.text())
+            .await
+            .map_err(|_| ScraperError::Timeout("reqwest response.text timed out".to_string()))??;
         Ok(Self {
-            content: response.text().await?,
+            content,
             status_code,
             url,
             ok,
@@ -199,7 +205,10 @@ impl Response {
         })
     }
 
-    pub async fn from_rquest_response(response: rquest::Response) -> Result<Self, ScraperError> {
+    pub async fn from_rquest_response(
+        response: rquest::Response,
+        body_timeout: Duration,
+    ) -> Result<Self, ScraperError> {
         let status_code = response.status().as_u16();
         let url = response.url().to_string();
         let ok = response.status().is_success();
@@ -212,8 +221,11 @@ impl Response {
             .cookies()
             .map(|c| (c.name().to_string(), c.value().to_string()))
             .collect();
+        let content = tokio::time::timeout(body_timeout, response.text())
+            .await
+            .map_err(|_| ScraperError::Timeout("rquest response.text timed out".to_string()))??;
         Ok(Self {
-            content: response.text().await?,
+            content,
             status_code,
             url,
             ok,
@@ -235,6 +247,7 @@ pub enum ScraperError {
     IoError(std::io::Error),
     ApiGatewayError(Box<dyn Error + Send + Sync>),
     PlaywrightJs(String),
+    Timeout(String),
     Other(String),
 }
 
@@ -251,6 +264,7 @@ impl Display for ScraperError {
             ScraperError::IoError(e) => write!(f, "IO error: {e}"),
             ScraperError::ApiGatewayError(e) => write!(f, "ApiGatewayError error: {e}"),
             ScraperError::PlaywrightJs(e) => write!(f, "PlaywrightJs error: {e}"),
+            ScraperError::Timeout(e) => write!(f, "Timeout error: {e}"),
             ScraperError::Other(e) => write!(f, "Other error: {e}"),
         }
     }
