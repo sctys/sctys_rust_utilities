@@ -195,7 +195,9 @@ impl<'a> SourceScraper<'a> {
             let response =
                 tokio::time::timeout(outer_timeout, client_builder.build()?.get(url).send())
                     .await
-                    .map_err(|_| ScraperError::Timeout(format!("reqwest send timed out for {url}")))?
+                    .map_err(|_| {
+                        ScraperError::Timeout(format!("reqwest send timed out for {url}"))
+                    })?
                     .map_err(|e| {
                         if e.is_timeout() {
                             let warn_str = format!(
@@ -702,9 +704,7 @@ mod tests {
         let scraper = SourceScraper::new(&project_logger, &secret);
         let url = "https://browserleaks.com/ip";
         let request_options = RequestOptions::default();
-        let rquest_client = scraper
-            .get_rquest_client(&request_options)
-            .unwrap();
+        let rquest_client = scraper.get_rquest_client(&request_options).unwrap();
         let response = scraper
             .request_with_rquest(url, &request_options, &rquest_client, None, None)
             .await

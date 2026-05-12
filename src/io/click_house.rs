@@ -17,6 +17,7 @@ impl<'a> ClickHouse<'a> {
     const LOCAL_HOST_PORT: &'static str = "localhost:9000";
     const USER_NAME: &'static str = "default";
     const INSERT_TIME: &'static str = "insert_time";
+    const TIMESTAMP: &'static str = "timestamp";
 
     pub async fn new(project_logger: &'a ProjectLogger, secret: &Secret<'a>) -> Result<Self> {
         const CATEGORY: &str = "clickhouse";
@@ -65,7 +66,8 @@ impl<'a> ClickHouse<'a> {
         )
     }
 
-    pub async fn create_table(
+    // Use for the case where we want to keep only the latest insert_time of the data
+    pub async fn create_replacing_merge_tree_table(
         &self,
         client: &Client,
         table_name: &str,
@@ -97,6 +99,35 @@ impl<'a> ClickHouse<'a> {
         query.push_str(&format!(
             "ORDER BY ({hash_key_columns}, cityHash64({hash_key_columns}))"
         ));
+        self.sql_execution(client, query.as_str()).await
+    }
+
+    // Use for the case where we want to keep only the oldest timestamp of the data
+    pub async fn create_aggregating_merge_tree_table(
+        &self,
+        client: &Client,
+        table_name: &str,
+        columns: &[ClickHouseColumn],
+    ) -> Result<()> {
+        let mut order_by_columns = String::new();
+        let mut query = format!("CREATE TABLE IF NOT EXISTS {table_name} (");
+        for column in columns {
+            query.push_str(&format!(
+                "{} {}, ",
+                column.name,
+                column.column_type.get_type()
+            ));
+            order_by_columns.push_str(&format!("{}, ", column.name));
+        }
+        query.push_str(&format!(
+            "{} SimpleAggregateFunction(min, Int64)",
+            Self::TIMESTAMP
+        ));
+        query.push_str(") ENGINE = AggregatingMergeTree() ");
+        if !order_by_columns.is_empty() {
+            order_by_columns = order_by_columns.trim_end_matches(", ").to_string();
+        }
+        query.push_str(&format!("ORDER BY ({order_by_columns})"));
         self.sql_execution(client, query.as_str()).await
     }
 
@@ -510,7 +541,7 @@ mod tests {
         let test_table = "test_table";
         let columns = TestDataCol::form_columns();
         clickhouse
-            .create_table(&clickhouse_client, test_table, &columns)
+            .create_replacing_merge_tree_table(&clickhouse_client, test_table, &columns)
             .await
             .unwrap();
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
