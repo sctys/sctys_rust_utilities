@@ -401,6 +401,7 @@ pub struct ClickHouseColumn {
 #[derive(Debug)]
 pub enum ClickHouseType {
     Boolean(bool),
+    Int8(bool),
     Int32(bool),
     Int64(bool),
     Float32(bool),
@@ -416,6 +417,13 @@ impl ClickHouseType {
                     "Nullable(UInt8)"
                 } else {
                     "UInt8"
+                }
+            }
+            Self::Int8(nullable) => {
+                if *nullable {
+                    "Nullable(Int8)"
+                } else {
+                    "Int8"
                 }
             }
             Self::Int32(nullable) => {
