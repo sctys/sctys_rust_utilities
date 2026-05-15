@@ -16,8 +16,8 @@ impl<'a> ClickHouse<'a> {
     const CLICKHOUSE_LOCAL: &'static str = "clickhouse-local";
     const LOCAL_HOST_PORT: &'static str = "localhost:9000";
     const USER_NAME: &'static str = "default";
-    const INSERT_TIME: &'static str = "insert_time";
-    const TIMESTAMP: &'static str = "timestamp";
+    pub const INSERT_TIME: &'static str = "insert_time";
+    pub const TIMESTAMP: &'static str = "timestamp";
 
     pub async fn new(project_logger: &'a ProjectLogger, secret: &Secret<'a>) -> Result<Self> {
         const CATEGORY: &str = "clickhouse";
