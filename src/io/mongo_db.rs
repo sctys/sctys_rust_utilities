@@ -8,38 +8,63 @@ use mongodb::{
 };
 use serde::Serialize;
 
-use crate::logger::ProjectLogger;
+use crate::{logger::ProjectLogger, secret::aws_secret::Secret, PROJECT};
 
 pub struct MongoDB<'a> {
     project_logger: &'a ProjectLogger,
+    password: String,
 }
 
 impl<'a> MongoDB<'a> {
-    const DB_URL: &'static str = "mongodb://localhost:27017/";
+    const DB_URL: &'static str =
+        "mongodb://{username}:{password}@localhost:27017/?authSource=admin";
     const ID: &'static str = "_id";
     const MODIFIED: &'static str = "modified";
+    const USER_NAME: &'static str = "app_user";
 
-    pub fn new(project_logger: &'a ProjectLogger) -> Self {
-        Self { project_logger }
+    pub async fn new(project_logger: &'a ProjectLogger, secret: &Secret<'a>) -> Result<Self> {
+        const CATEGORY: &str = "mongo_db";
+        const NAME: &str = "password";
+        let password = secret
+            .get_secret_value(PROJECT, CATEGORY, NAME)
+            .await
+            .map_err(|e| {
+                let error_str = format!("Unable to get MongoDB password. {e}");
+                project_logger.log_error(&error_str);
+                mongodb::error::Error::custom(error_str)
+            })?;
+        Ok(Self {
+            project_logger,
+            password,
+        })
     }
 
     pub fn get_logger(&self) -> &'a ProjectLogger {
         self.project_logger
     }
 
+    fn connection_uri(&self) -> String {
+        Self::DB_URL
+            .replace("{username}", Self::USER_NAME)
+            .replace("{password}", &self.password)
+    }
+
     pub async fn create_connection(&self) -> Result<Client> {
-        Client::with_uri_str(Self::DB_URL).await.map_or_else(
-            |e| {
-                let error_str = format!("Fail to connect to MongoDB. {e}");
-                self.project_logger.log_error(&error_str);
-                Err(e)
-            },
-            |client| {
-                let debug_str = "Connected to MongoDB";
-                self.project_logger.log_debug(debug_str);
-                Ok(client)
-            },
-        )
+        let connection_uri = self.connection_uri();
+        Client::with_uri_str(connection_uri.as_str())
+            .await
+            .map_or_else(
+                |e| {
+                    let error_str = format!("Fail to connect to MongoDB. {e}");
+                    self.project_logger.log_error(&error_str);
+                    Err(e)
+                },
+                |client| {
+                    let debug_str = "Connected to MongoDB";
+                    self.project_logger.log_debug(debug_str);
+                    Ok(client)
+                },
+            )
     }
 
     pub fn obtain_database(&self, client: &Client, database_name: &str) -> Database {
@@ -270,7 +295,7 @@ impl<'a> MongoDB<'a> {
     ) -> Result<()> {
         let output = Command::new("mongodump")
             .arg("--uri")
-            .arg(Self::DB_URL)
+            .arg(self.connection_uri())
             .arg("--db")
             .arg(database_name)
             .arg("--collection")
@@ -375,16 +400,22 @@ mod tests {
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
             .join("log_sctys_io");
+        std::fs::create_dir_all(&logger_path).unwrap();
         let logger_name = "test_mongo_db";
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         project_logger.set_logger(LevelFilter::Debug);
         project_logger
     }
 
+    async fn set_secret(project_logger: &ProjectLogger) -> Secret<'_> {
+        Secret::new(project_logger).await
+    }
+
     #[tokio::test]
     async fn test_replace_document() {
         let project_logger = set_logger();
-        let mongo_db = MongoDB::new(&project_logger);
+        let secret = set_secret(&project_logger).await;
+        let mongo_db = MongoDB::new(&project_logger, &secret).await.unwrap();
         let client = mongo_db.create_connection().await.unwrap();
         let database = mongo_db.obtain_database(&client, "test_io");
         let collection: Collection<TestDocument> =
@@ -423,7 +454,8 @@ mod tests {
     async fn test_backup_collection() {
         let folder_path = Path::new(&env::var("SCTYS_DATA").unwrap()).join("test_io");
         let project_logger = set_logger();
-        let mongo_db = MongoDB::new(&project_logger);
+        let secret = set_secret(&project_logger).await;
+        let mongo_db = MongoDB::new(&project_logger, &secret).await.unwrap();
         let database_name = "test_io";
         let collection_name = "test_collection";
         let query_str = r#"{ "modified": { "$gte": { "$date": "2025-01-01T00:00:00.000Z" }, "$lt": { "$date": "2026-01-01T00:00:00.000Z" } } }"#;
@@ -435,7 +467,8 @@ mod tests {
     #[tokio::test]
     async fn test_delete_documents() {
         let project_logger = set_logger();
-        let mongo_db = MongoDB::new(&project_logger);
+        let secret = set_secret(&project_logger).await;
+        let mongo_db = MongoDB::new(&project_logger, &secret).await.unwrap();
         let client = mongo_db.create_connection().await.unwrap();
         let database = mongo_db.obtain_database(&client, "test_io");
         let collection: Collection<TestDocument> =
