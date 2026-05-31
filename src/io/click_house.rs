@@ -479,6 +479,13 @@ impl ClickHouseFunc {
         Expr::cust_with_exprs("toInt32(?)", [expr.into()])
     }
 
+    pub fn to_int64<E>(expr: E) -> SimpleExpr
+    where
+        E: Into<SimpleExpr>,
+    {
+        Expr::cust_with_exprs("toInt64(?)", [expr.into()])
+    }
+
     pub fn replace_union_with_union_distinct(query_str: String) -> String {
         query_str.replace(" UNION ", " UNION DISTINCT ")
     }
