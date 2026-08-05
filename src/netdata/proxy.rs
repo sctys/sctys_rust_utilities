@@ -215,8 +215,8 @@ impl ProxyResult {
         Ok(proxy)
     }
 
-    pub fn get_rquest_proxy(&self) -> Result<rquest::Proxy, ProxyError> {
-        let proxy = rquest::Proxy::all(self.get_http_address())?;
+    pub fn get_rquest_proxy(&self) -> Result<wreq::Proxy, ProxyError> {
+        let proxy = wreq::Proxy::all(self.get_http_address())?;
         Ok(proxy)
     }
 
@@ -385,7 +385,7 @@ trait ProxyRequest {
 #[derive(Debug)]
 pub enum ProxyError {
     Reqwest(reqwest::Error),
-    Rquest(rquest::Error),
+    Rquest(wreq::Error),
     Json(serde_json::Error),
     Chrono(chrono::ParseError),
     Header(InvalidHeaderValue),
@@ -415,8 +415,8 @@ impl From<reqwest::Error> for ProxyError {
     }
 }
 
-impl From<rquest::Error> for ProxyError {
-    fn from(value: rquest::Error) -> Self {
+impl From<wreq::Error> for ProxyError {
+    fn from(value: wreq::Error) -> Self {
         ProxyError::Rquest(value)
     }
 }

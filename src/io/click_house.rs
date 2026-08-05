@@ -59,7 +59,8 @@ impl<'a> ClickHouse<'a> {
                 Err(e)
             },
             |()| {
-                let debug_str = format!("Query {query_str} executed.");
+                let redacted_query = query_str.replace(&self.password, "********");
+                let debug_str = format!("Query {redacted_query} executed.");
                 self.project_logger.log_debug(&debug_str);
                 Ok(())
             },
@@ -129,6 +130,105 @@ impl<'a> ClickHouse<'a> {
         }
         query.push_str(&format!("ORDER BY ({order_by_columns})"));
         self.sql_execution(client, query.as_str()).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_dictionary_if_not_exists(
+        &self,
+        client: &Client,
+        database: &str,
+        table_name: &str,
+        dict_name: &str,
+        key_columns: &[ClickHouseColumn],
+        value_columns: &[ClickHouseColumn],
+        query: &str,
+    ) -> Result<()> {
+        let create_query = Self::build_create_dictionary_query(
+            database,
+            table_name,
+            &self.password,
+            dict_name,
+            key_columns,
+            value_columns,
+            query,
+        )?;
+        self.sql_execution(client, create_query.as_str()).await
+    }
+
+    fn build_create_dictionary_query(
+        database: &str,
+        table_name: &str,
+        password: &str,
+        dict_name: &str,
+        key_columns: &[ClickHouseColumn],
+        value_columns: &[ClickHouseColumn],
+        query: &str,
+    ) -> Result<String> {
+        let mut host_port_parts = Self::LOCAL_HOST_PORT.split(':');
+        if let (Some(host), Some(port)) = (host_port_parts.next(), host_port_parts.next()) {
+            if key_columns.is_empty() {
+                let error_str = format!(
+                    "Unable to create dictionary {dict_name}. No key columns were provided."
+                );
+                return Err(clickhouse::error::Error::Custom(error_str));
+            }
+
+            let mut column_defs = String::new();
+            let mut key_column_names = String::new();
+
+            for column in key_columns {
+                column_defs.push_str(&format!(
+                    "{} {}, ",
+                    column.name,
+                    column.column_type.get_type()
+                ));
+                key_column_names.push_str(&format!("{}, ", column.name));
+            }
+
+            for column in value_columns {
+                column_defs.push_str(&format!(
+                    "{} {}, ",
+                    column.name,
+                    column.column_type.get_type()
+                ));
+            }
+
+            column_defs = column_defs.trim_end_matches(", ").to_string();
+            key_column_names = key_column_names.trim_end_matches(", ").to_string();
+            let qualifying_query = Self::qualifying_database_for_table(query, database, table_name);
+            let escaped_query = Self::escape_clickhouse_string_literal(qualifying_query.as_str());
+
+            Ok(format!(
+                "CREATE DICTIONARY IF NOT EXISTS {dict_name} ({column_defs}) \
+                PRIMARY KEY ({key_column_names}) \
+                SOURCE(CLICKHOUSE(\
+                    HOST '{host}' \
+                    PORT {port} \
+                    USER '{}' \
+                    PASSWORD '{password}' \
+                    DB '{database}' \
+                    QUERY '{escaped_query}'\
+                )) \
+                LIFETIME(MIN 300 MAX 600) \
+                LAYOUT(COMPLEX_KEY_HASHED())",
+                Self::USER_NAME
+            ))
+        } else {
+            let error_str = format!(
+                "Unable to split the host and port {}.",
+                Self::LOCAL_HOST_PORT
+            );
+            Err(clickhouse::error::Error::Custom(error_str))
+        }
+    }
+
+    fn escape_clickhouse_string_literal(value: &str) -> String {
+        value.replace('\\', "\\\\").replace('\'', "\\'")
+    }
+
+    fn qualifying_database_for_table(query: &str, database: &str, table_name: &str) -> String {
+        let qualified_table_name = format!("`{database}`.`{table_name}`");
+        query.replace(&format!("`{table_name}`"), qualified_table_name.as_str())
     }
 
     pub fn insert_table_from_parquet(
@@ -472,11 +572,19 @@ impl ClickHouseFunc {
         Alias::new(ClickHouse::INSERT_TIME)
     }
 
+    pub fn to_int8<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("toInt8(?)", [expr.into()])
+    }
+
     pub fn to_int32<E>(expr: E) -> SimpleExpr
     where
         E: Into<SimpleExpr>,
     {
         Expr::cust_with_exprs("toInt32(?)", [expr.into()])
+    }
+
+    pub fn to_int32_or_null<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("toInt32OrNull(?)", [expr.into()])
     }
 
     pub fn to_int64<E>(expr: E) -> SimpleExpr
@@ -486,8 +594,151 @@ impl ClickHouseFunc {
         Expr::cust_with_exprs("toInt64(?)", [expr.into()])
     }
 
+    pub fn to_int64_or_null<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("toInt64OrNull(?)", [expr.into()])
+    }
+
+    pub fn to_float32<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("toFloat32(?)", [expr.into()])
+    }
+
+    pub fn to_float32_or_null<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("toFloat32OrNull(?)", [expr.into()])
+    }
+
     pub fn replace_union_with_union_distinct(query_str: String) -> String {
         query_str.replace(" UNION ", " UNION DISTINCT ")
+    }
+
+    pub fn abs<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("abs(?)", [expr.into()])
+    }
+
+    pub fn is_nan<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("isNaN(?)", [expr.into()])
+    }
+
+    pub fn if_expr<C, T, E>(condition: C, then_expr: T, else_expr: E) -> SimpleExpr
+    where
+        C: Into<SimpleExpr>,
+        T: Into<SimpleExpr>,
+        E: Into<SimpleExpr>,
+    {
+        Expr::cust_with_exprs(
+            "if(?, ?, ?)",
+            [condition.into(), then_expr.into(), else_expr.into()],
+        )
+    }
+
+    pub fn int_div<E: Into<SimpleExpr>>(expr: E, divisor: u64) -> SimpleExpr {
+        let expr = expr.into();
+        Expr::cust_with_exprs("intDiv(?, ?)", [expr, divisor.into()])
+    }
+
+    pub fn modulo<E: Into<SimpleExpr>>(expr: E, divisor: u64) -> SimpleExpr {
+        let expr = expr.into();
+        Expr::cust_with_exprs("modulo(?, ?)", [expr, divisor.into()])
+    }
+
+    pub fn to_date_time<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("toDateTime(?)", [expr.into()])
+    }
+
+    pub fn format_date_time<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("toYYYYMMDD(?)", [expr.into()])
+    }
+
+    pub fn parse_date_time_best_effort_or_null<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("parseDateTimeBestEffortOrNull(?)", vec![expr.into()])
+    }
+
+    pub fn trim_both<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("trimBoth(?)", [expr.into()])
+    }
+
+    pub fn trim_right<E: Into<SimpleExpr>>(expr: E, trim_chars: &str) -> SimpleExpr {
+        Expr::cust_with_exprs(
+            "trimRight(?, ?)",
+            [expr.into(), Expr::val(trim_chars).into()],
+        )
+    }
+
+    pub fn split_by_string<E: Into<SimpleExpr>>(expr: E, delimiter: &str) -> SimpleExpr {
+        Expr::cust_with_exprs(
+            "splitByString(?, ?)",
+            [Expr::val(delimiter).into(), expr.into()],
+        )
+    }
+
+    pub fn split_by_char<E: Into<SimpleExpr>>(expr: E, delimiter: char) -> SimpleExpr {
+        Expr::cust_with_exprs(
+            "splitByChar(?, ?)",
+            [Expr::val(delimiter).into(), expr.into()],
+        )
+    }
+
+    pub fn array_element<E: Into<SimpleExpr>>(expr: E, index: impl Into<SimpleExpr>) -> SimpleExpr {
+        Expr::cust_with_exprs("arrayElement(?, ?)", [expr.into(), index.into()])
+    }
+
+    pub fn length<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("length(?)", [expr.into()])
+    }
+
+    pub fn starts_with<E: Into<SimpleExpr>>(expr: E, prefix: &str) -> SimpleExpr {
+        Expr::cust_with_exprs("startsWith(?, ?)", [expr.into(), Expr::val(prefix).into()])
+    }
+
+    pub fn ends_with<E: Into<SimpleExpr>>(expr: E, suffix: &str) -> SimpleExpr {
+        Expr::cust_with_exprs("endsWith(?, ?)", [expr.into(), Expr::val(suffix).into()])
+    }
+
+    pub fn contains_substr<E: Into<SimpleExpr>>(expr: E, substr: &str) -> SimpleExpr {
+        Expr::cust_with_exprs(
+            "position(?, ?) > 0",
+            [expr.into(), Expr::val(substr).into()],
+        )
+    }
+
+    pub fn replace_all<E: Into<SimpleExpr>>(expr: E, from: &str, to: &str) -> SimpleExpr {
+        Expr::cust_with_exprs(
+            "replaceAll(?, ?, ?)",
+            [expr.into(), Expr::val(from).into(), Expr::val(to).into()],
+        )
+    }
+
+    pub fn digits_only<E: Into<SimpleExpr>>(expr: E) -> SimpleExpr {
+        Expr::cust_with_exprs("replaceRegexpAll(?, '[^0-9]', '')", [expr.into()])
+    }
+
+    pub fn concat<E1: Into<SimpleExpr>, E2: Into<SimpleExpr>>(left: E1, right: E2) -> SimpleExpr {
+        Expr::cust_with_exprs("concat(?, ?)", [left.into(), right.into()])
+    }
+
+    pub fn substring<E1: Into<SimpleExpr>, E2: Into<SimpleExpr>, E3: Into<SimpleExpr>>(
+        expr: E1,
+        start: E2,
+        len: E3,
+    ) -> SimpleExpr {
+        Expr::cust_with_exprs(
+            "substring(?, ?, ?)",
+            [expr.into(), start.into(), len.into()],
+        )
+    }
+
+    pub fn dict_get<E: Into<SimpleExpr>>(dict_name: &str, value: &str, keys: E) -> SimpleExpr {
+        Expr::cust_with_exprs(
+            "dictGet(?, ?, ?)",
+            [
+                Expr::val(dict_name).into(),
+                Expr::val(value).into(),
+                keys.into(),
+            ],
+        )
+    }
+
+    pub fn dict_has<E: Into<SimpleExpr>>(dict_name: &str, keys: E) -> SimpleExpr {
+        Expr::cust_with_exprs("dictHas(?, ?)", [Expr::val(dict_name).into(), keys.into()])
     }
 }
 
@@ -508,6 +759,68 @@ mod tests {
         CourseID,
         HomeStraight,
         Width,
+    }
+
+    #[tokio::test]
+    async fn test_build_create_dictionary_query() {
+        let logger_name = "test_clickhouse";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_io");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        project_logger.set_logger(LevelFilter::Debug);
+        let secret = Secret::new(&project_logger).await;
+        let clickhouse = ClickHouse::new(&project_logger, &secret).await.unwrap();
+        let database = "test";
+        let table_name = "test_table";
+        let clickhouse_client = clickhouse.create_database_client(database);
+        let dict_name = "test_dict";
+        let key_columns = vec![
+            ClickHouseColumn {
+                name: "Venue".to_string(),
+                column_type: ClickHouseType::String(false),
+                is_hash_key: true,
+            },
+            ClickHouseColumn {
+                name: "CourseID".to_string(),
+                column_type: ClickHouseType::String(false),
+                is_hash_key: true,
+            },
+        ];
+        let value_columns = vec![ClickHouseColumn {
+            name: "Width".to_string(),
+            column_type: ClickHouseType::Float64(false),
+            is_hash_key: false,
+        }];
+        let query = Query::select()
+            .columns(vec!["Venue", "CourseID", "Width"])
+            .from("test_table")
+            .to_string(MysqlQueryBuilder);
+        clickhouse
+            .create_dictionary_if_not_exists(
+                &clickhouse_client,
+                database,
+                table_name,
+                dict_name,
+                &key_columns,
+                &value_columns,
+                &query,
+            )
+            .await
+            .unwrap();
+        let value = "Width";
+        let keys = Expr::tuple([
+            Expr::col((Alias::new("t"), "Venue")).into(),
+            Expr::col((Alias::new("t"), "CourseID")).into(),
+        ]);
+        let query = Query::select()
+            .expr(ClickHouseFunc::dict_get(dict_name, value, keys))
+            .from_as(table_name, Alias::new("t"))
+            .to_string(MysqlQueryBuilder);
+        clickhouse
+            .sql_execution(&clickhouse_client, &query)
+            .await
+            .unwrap();
     }
 
     impl TestDataCol {

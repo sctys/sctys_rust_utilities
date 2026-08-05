@@ -42,8 +42,8 @@ pub enum ResponseCheckResult {
 }
 
 pub enum ScraperClient<'a> {
-    Rquest(&'a rquest::Client),
-    Playwright(&'a Playwright),
+    Rquest(&'a wreq::Client),
+    Playwright(&'a mut Playwright),
     PlaywrightJs(&'a PlaywrightClient),
 }
 
@@ -206,7 +206,7 @@ impl Response {
     }
 
     pub async fn from_rquest_response(
-        response: rquest::Response,
+        response: wreq::Response,
         body_timeout: Duration,
     ) -> Result<Self, ScraperError> {
         let status_code = response.status().as_u16();
@@ -238,7 +238,7 @@ impl Response {
 #[derive(Debug)]
 pub enum ScraperError {
     Reqwest(reqwest::Error),
-    Rquest(rquest::Error),
+    Rquest(wreq::Error),
     PyScraper(String),
     Proxy(ProxyError),
     CapSolver(CapSolverError),
@@ -278,8 +278,8 @@ impl From<reqwest::Error> for ScraperError {
     }
 }
 
-impl From<rquest::Error> for ScraperError {
-    fn from(value: rquest::Error) -> Self {
+impl From<wreq::Error> for ScraperError {
+    fn from(value: wreq::Error) -> Self {
         Self::Rquest(value)
     }
 }

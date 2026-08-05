@@ -416,9 +416,9 @@ impl ApiGateway {
 
     pub async fn rquest_send(
         &self,
-        client: &rquest::Client,
-        mut request: rquest::Request,
-    ) -> Result<rquest::Response, Box<dyn Error + Send + Sync>> {
+        client: &wreq::Client,
+        mut request: wreq::Request,
+    ) -> Result<wreq::Response, Box<dyn Error + Send + Sync>> {
         {
             // Get endpoints
             let endpoints = self.endpoints.lock().unwrap();
@@ -453,7 +453,7 @@ impl ApiGateway {
             let headers = request.headers_mut();
             headers.insert(
                 "Host",
-                rquest::header::HeaderValue::from_str(endpoint).unwrap(),
+                wreq::header::HeaderValue::from_str(endpoint).unwrap(),
             );
 
             // Auto generate random X-Forwarded-For if doesn't exist
@@ -479,7 +479,7 @@ impl ApiGateway {
 
             headers.insert(
                 "X-My-X-Forwarded-For",
-                rquest::header::HeaderValue::from_str(&forwarded_ip).unwrap(),
+                wreq::header::HeaderValue::from_str(&forwarded_ip).unwrap(),
             );
         };
 
