@@ -113,12 +113,20 @@ impl<'a> ClickHouse<'a> {
         let mut order_by_columns = String::new();
         let mut query = format!("CREATE TABLE IF NOT EXISTS {table_name} (");
         for column in columns {
-            query.push_str(&format!(
-                "{} {}, ",
-                column.name,
-                column.column_type.get_type()
-            ));
-            order_by_columns.push_str(&format!("{}, ", column.name));
+            if column.is_hash_key {
+                query.push_str(&format!(
+                    "{} {}, ",
+                    column.name,
+                    column.column_type.get_type()
+                ));
+                order_by_columns.push_str(&format!("{}, ", column.name));
+            } else {
+                query.push_str(&format!(
+                    "{} SimpleAggregateFunction(min, {}), ",
+                    column.name,
+                    column.column_type.get_type()
+                ));
+            }
         }
         query.push_str(&format!(
             "{} SimpleAggregateFunction(min, Int64)",
