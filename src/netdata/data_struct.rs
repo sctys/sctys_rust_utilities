@@ -2,7 +2,10 @@ use std::{collections::HashMap, error::Error, fmt::Display, time::Duration};
 
 use chrono::{DateTime, Utc};
 use playwright_rust::Playwright;
-use reqwest::{header::HeaderMap, Url};
+use reqwest::{
+    header::{HeaderMap, HeaderName, HeaderValue},
+    Url,
+};
 
 use crate::netdata::{capsolver::CapSolverError, playwright_js_client::PlaywrightClient};
 
@@ -156,6 +159,26 @@ impl RequestOptions {
                 self.headers = Some(headers);
             }
         }
+    }
+
+    pub fn try_insert_to_header_map(&mut self, key: &str, value: String) -> bool {
+        let Ok(header_name) = HeaderName::from_bytes(key.as_bytes()) else {
+            return false;
+        };
+        let Ok(header_value) = HeaderValue::from_str(&value) else {
+            return false;
+        };
+        match self.headers.as_mut() {
+            Some(headers) => {
+                headers.insert(header_name, header_value);
+            }
+            None => {
+                let mut headers = HeaderMap::new();
+                headers.insert(header_name, header_value);
+                self.headers = Some(headers);
+            }
+        }
+        true
     }
 }
 

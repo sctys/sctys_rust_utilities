@@ -27,6 +27,7 @@ pub struct ScraperProxy<'a> {
     next_refresh_time: Option<i64>,
     proxy_config: ProxyConfig,
     block_count: u8,
+    sticky_proxy: Option<ProxyResult>,
 }
 
 impl<'a> ScraperProxy<'a> {
@@ -43,6 +44,7 @@ impl<'a> ScraperProxy<'a> {
             next_refresh_time: None,
             proxy_config,
             block_count: 0,
+            sticky_proxy: None,
         })
     }
 
@@ -120,6 +122,28 @@ impl<'a> ScraperProxy<'a> {
         self.block_count = block_count;
     }
 
+    /// Selects a proxy and keeps returning it until the sticky state is cleared.
+    pub async fn generate_sticky_proxy(&mut self) -> Result<ProxyResult, ProxyError> {
+        let proxy = self.generate_proxy().await?;
+        self.sticky_proxy = Some(proxy.clone());
+        Ok(proxy)
+    }
+
+    /// Releases the proxy pinned by `generate_sticky_proxy`.
+    pub fn clear_sticky_proxy(&mut self) {
+        self.sticky_proxy = None;
+    }
+
+    /// Restores a previously selected proxy after a preflight request.
+    pub fn set_sticky_proxy(&mut self, proxy: ProxyResult) {
+        self.sticky_proxy = Some(proxy);
+    }
+
+    /// Returns whether proxy selection is currently pinned.
+    pub fn has_sticky_proxy(&self) -> bool {
+        self.sticky_proxy.is_some()
+    }
+
     fn is_proxy_blocked(&self, proxy: &ProxyResult) -> bool {
         let proxy_address = proxy.get_http_address();
         self.block_proxy_dict
@@ -166,6 +190,9 @@ impl<'a> ScraperProxy<'a> {
     }
 
     pub async fn generate_proxy(&mut self) -> Result<ProxyResult, ProxyError> {
+        if let Some(proxy) = &self.sticky_proxy {
+            return Ok(proxy.clone());
+        }
         loop {
             self.maybe_refresh_list().await?;
             if self.active_proxy_list.is_empty() {
@@ -202,6 +229,13 @@ impl ProxyResult {
             .replace("{password}", &self.password)
             .replace("{proxy_address}", &self.proxy_address)
             .replace("{port}", &self.port.to_string())
+    }
+
+    pub fn get_cap_solver_proxy(&self) -> String {
+        format!(
+            "http:{}:{}:{}:{}",
+            self.proxy_address, self.port, self.username, self.password
+        )
     }
 
     fn get_server_address(&self) -> String {
@@ -520,6 +554,7 @@ mod tests {
                 proxy_token: "token".to_string(),
             },
             block_count: 0,
+            sticky_proxy: None,
         }
     }
 

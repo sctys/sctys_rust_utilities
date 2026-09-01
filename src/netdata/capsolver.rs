@@ -1,4 +1,4 @@
-use std::{error::Error, fmt::Display, time::Duration};
+use std::{collections::HashMap, error::Error, fmt::Display, time::Duration};
 
 use reqwest::ClientBuilder;
 use serde::{Deserialize, Serialize};
@@ -28,34 +28,84 @@ impl<'a> CapSolver<'a> {
         website_url: &str,
         website_key: &str,
     ) -> Result<String, CapSolverError> {
-        let cap_solver_task_response = self.create_task(website_url, website_key).await?;
+        let cap_solver_task_response = self
+            .create_task(CapSolverTask::create_task(website_url, website_key))
+            .await?;
         self.logger.log_debug(&format!(
             "CapSolver task created: {}",
             cap_solver_task_response.task_id
         ));
+        let solution = self.get_solution(&cap_solver_task_response).await?;
+        if solution.token.is_empty() {
+            return Err(CapSolverError::Json(serde::de::Error::custom(
+                "No Turnstile token found",
+            )));
+        }
+        self.logger.log_debug("CapSolver Turnstile task solved");
+        Ok(solution.token)
+    }
+
+    pub async fn solve_cloudflare(
+        &self,
+        website_url: &str,
+        proxy: &str,
+        user_agent: &str,
+        html: &str,
+    ) -> Result<CloudflareSolution, CapSolverError> {
+        let cap_solver_task_response = self
+            .create_task(CloudflareTask::create_task(
+                website_url,
+                proxy,
+                user_agent,
+                html,
+            ))
+            .await?;
+        self.logger.log_debug(&format!(
+            "CapSolver Cloudflare task created: {}",
+            cap_solver_task_response.task_id
+        ));
+        let solution = self.get_solution(&cap_solver_task_response).await?;
+        let token = solution.token;
+        let mut cookies = solution.cookies.unwrap_or_default();
+        if cookies.get("cf_clearance").is_none_or(String::is_empty) && !token.is_empty() {
+            cookies.insert("cf_clearance".to_string(), token);
+        }
+        if cookies.get("cf_clearance").is_none_or(String::is_empty) {
+            return Err(CapSolverError::Json(serde::de::Error::custom(
+                "No Cloudflare cf_clearance cookie found",
+            )));
+        }
+        let user_agent = solution
+            .user_agent
+            .unwrap_or_else(|| user_agent.to_string());
+        let headers = solution.headers.unwrap_or_default();
+        self.logger.log_debug(&format!(
+            "CapSolver Cloudflare solution context: user agent {user_agent}, {} cookies, {} headers",
+            cookies.len(),
+            headers.len()
+        ));
+        self.logger.log_debug("CapSolver Cloudflare task solved");
+        Ok(CloudflareSolution {
+            cookies,
+            user_agent,
+            headers,
+        })
+    }
+
+    async fn get_solution(
+        &self,
+        cap_solver_task_response: &CapSolverResponse,
+    ) -> Result<CapSolverSolution, CapSolverError> {
         time_operation::async_sleep(Self::RETRY_SLEEP).await;
         for _ in 0..Self::RETRY_COUNT {
-            let cap_solver_get_result_response = self
-                .get_cap_solver_result(&cap_solver_task_response)
-                .await?;
+            let cap_solver_get_result_response =
+                self.get_cap_solver_result(cap_solver_task_response).await?;
             if cap_solver_get_result_response.is_ready() {
-                match cap_solver_get_result_response.solution {
-                    Some(solution) => {
-                        self.logger
-                            .log_debug(&format!("CapSolver task solved: {}", solution.token));
-                        return Ok(solution.token);
-                    }
-                    None => {
-                        self.logger.log_error(&format!(
-                            "CapSolver task failed: {}",
-                            cap_solver_get_result_response.error_id
-                        ));
-                        return Err(CapSolverError::Json(serde::de::Error::custom(
-                            "No solution found",
-                        )));
-                    }
-                }
-            } else if cap_solver_get_result_response.is_failed() {
+                return cap_solver_get_result_response.solution.ok_or_else(|| {
+                    CapSolverError::Json(serde::de::Error::custom("No solution found"))
+                });
+            }
+            if cap_solver_get_result_response.is_failed() {
                 self.logger.log_error(&format!(
                     "CapSolver task failed: {:?}",
                     cap_solver_get_result_response.error_description
@@ -72,19 +122,17 @@ impl<'a> CapSolver<'a> {
         ))))
     }
 
-    async fn create_task(
+    async fn create_task<T: Serialize>(
         &self,
-        website_url: &str,
-        website_key: &str,
+        task: T,
     ) -> Result<CapSolverResponse, CapSolverError> {
-        let task = CapSolverTask::create_task(website_url, website_key);
         let task_request = CapSolverTaskRequest::create_task(&self.config.api_key, task);
         let client_builder = ClientBuilder::new();
         let client = client_builder.build()?;
         let mut error = None;
         for _ in 0..Self::RETRY_COUNT {
             let res = client
-                .post(CapSolverTaskRequest::CREATE_TASK_URL)
+                .post(CapSolverTaskRequest::<T>::CREATE_TASK_URL)
                 .timeout(Self::TIMEOUT)
                 .json(&task_request)
                 .send()
@@ -118,10 +166,10 @@ impl<'a> CapSolver<'a> {
         if let Some(e) = error {
             Err(e)
         } else {
-            panic!(
-                "Unable to get capsolver response after {} retries",
+            Err(CapSolverError::Json(serde::de::Error::custom(format!(
+                "Unable to create capsolver task after {} retries",
                 Self::RETRY_COUNT
-            );
+            ))))
         }
     }
 
@@ -162,11 +210,31 @@ impl<'a> CapSolver<'a> {
         if let Some(e) = error {
             Err(e)
         } else {
-            panic!(
+            Err(CapSolverError::Json(serde::de::Error::custom(format!(
                 "Unable to get capsolver result after {} retries",
                 Self::RETRY_COUNT
-            );
+            ))))
         }
+    }
+}
+
+pub struct CloudflareSolution {
+    cookies: HashMap<String, String>,
+    user_agent: String,
+    headers: HashMap<String, String>,
+}
+
+impl CloudflareSolution {
+    pub fn cookies(&self) -> &HashMap<String, String> {
+        &self.cookies
+    }
+
+    pub fn user_agent(&self) -> &str {
+        &self.user_agent
+    }
+
+    pub fn headers(&self) -> &HashMap<String, String> {
+        &self.headers
     }
 }
 
@@ -198,6 +266,33 @@ struct CapSolverTask {
     metadata: MetaData,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CloudflareTask {
+    #[serde(rename = "type")]
+    type_: String,
+    website_url: String,
+    proxy: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    html: Option<String>,
+}
+
+impl CloudflareTask {
+    const TASK_TYPE: &str = "AntiCloudflareTask";
+
+    fn create_task(website_url: &str, proxy: &str, user_agent: &str, html: &str) -> Self {
+        Self {
+            type_: Self::TASK_TYPE.to_string(),
+            website_url: website_url.to_string(),
+            proxy: proxy.to_string(),
+            user_agent: (!user_agent.is_empty()).then(|| user_agent.to_string()),
+            html: (!html.is_empty()).then(|| html.to_string()),
+        }
+    }
+}
+
 impl CapSolverTask {
     const TASK_TYPE: &str = "AntiTurnstileTaskProxyLess";
 
@@ -213,15 +308,15 @@ impl CapSolverTask {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CapSolverTaskRequest {
+struct CapSolverTaskRequest<T> {
     client_key: String,
-    task: CapSolverTask,
+    task: T,
 }
 
-impl CapSolverTaskRequest {
+impl<T> CapSolverTaskRequest<T> {
     const CREATE_TASK_URL: &str = "https://api.capsolver.com/createTask";
 
-    pub fn create_task(client_key: &str, task: CapSolverTask) -> Self {
+    fn create_task(client_key: &str, task: T) -> Self {
         Self {
             client_key: client_key.to_string(),
             task,
@@ -258,7 +353,14 @@ impl CapSolverGetResult {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CapSolverSolution {
+    #[serde(default)]
     token: String,
+    #[serde(default)]
+    cookies: Option<HashMap<String, String>>,
+    #[serde(default)]
+    user_agent: Option<String>,
+    #[serde(default)]
+    headers: Option<HashMap<String, String>>,
 }
 
 #[derive(Deserialize)]

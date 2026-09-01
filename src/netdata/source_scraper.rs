@@ -34,6 +34,12 @@ const STEALTH_INIT_SCRIPT: &str = include_str!("./js/stealth_init_script.js");
 const PLAYWRIGHT_TMP_ENV: &str = "SCTYS_PLAYWRIGHT_TMP";
 const PLAYWRIGHT_TMP_DIR: &str = "sctys_playwright_tmp";
 
+#[derive(Clone, Copy)]
+pub enum RquestBrowser {
+    Chrome120,
+    Chrome135,
+}
+
 pub struct SourceScraper<'a> {
     logger: &'a ProjectLogger,
     secret: &'a Secret<'a>,
@@ -62,7 +68,7 @@ impl Drop for PlaywrightRequestTempDir {
 impl<'a> SourceScraper<'a> {
     const GOOGLE_SHEET_URL: &'a str = "https://docs.google.com/spreadsheets/d/";
     const GOOGLE_SHEET_REPLACE_TOKEN: (&'a str, &'a str) = ("edit#gid=", "export?format=csv&gid=");
-    const RQUEST_BROWSER: Emulation = Emulation::Chrome135;
+    const RQUEST_BROWSER: RquestBrowser = RquestBrowser::Chrome135;
 
     pub fn new(logger: &'a ProjectLogger, secret: &'a Secret) -> Self {
         Self { logger, secret }
@@ -90,13 +96,25 @@ impl<'a> SourceScraper<'a> {
         &self,
         request_options: &RequestOptions,
     ) -> Result<wreq::Client, ScraperError> {
+        self.get_rquest_client_with_browser(request_options, Self::RQUEST_BROWSER)
+    }
+
+    pub fn get_rquest_client_with_browser(
+        &self,
+        request_options: &RequestOptions,
+        browser: RquestBrowser,
+    ) -> Result<wreq::Client, ScraperError> {
         let read_timeout = Self::get_read_timeout(
             request_options.timeout,
             request_options.connect_timeout,
             "Invalid rquest timeout config. timeout must be greater than connect_timeout",
         )?;
+        let emulation = match browser {
+            RquestBrowser::Chrome120 => Emulation::Chrome120,
+            RquestBrowser::Chrome135 => Emulation::Chrome135,
+        };
         let rquest_client = wreq::Client::builder()
-            .emulation(Self::RQUEST_BROWSER)
+            .emulation(emulation)
             .connect_timeout(request_options.connect_timeout)
             .timeout(request_options.timeout)
             .read_timeout(read_timeout)
@@ -666,12 +684,12 @@ impl<'a> SourceScraper<'a> {
         Response::from_reqwest_response(response, request_options.timeout).await
     }
 
-    pub async fn request_with_rquest(
+    pub async fn request_with_rquest<'b>(
         &self,
         url: &str,
         request_options: &RequestOptions,
         client: &wreq::Client,
-        scraper_proxy: Option<&mut ScraperProxy<'a>>,
+        scraper_proxy: Option<&mut ScraperProxy<'b>>,
         api_gateway: Option<&ApiGateway>,
     ) -> Result<Response, ScraperError> {
         let debug_log = format!("Attempting to make a request to {} with rquest", url);
@@ -712,6 +730,7 @@ impl<'a> SourceScraper<'a> {
                 && response.status() == wreq::StatusCode::FORBIDDEN
             {
                 scraper_proxy.add_proxy_block_count(&proxy_result);
+                scraper_proxy.clear_sticky_proxy();
             };
             response
         } else {
