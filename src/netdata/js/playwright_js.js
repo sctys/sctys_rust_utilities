@@ -329,7 +329,15 @@ async function initBrowser(headlessMode = false) {
             ]
         };
 
-        browser = await chromium.launch(launchOptions);
+        // Prefer the installed Google Chrome. The bundled Chromium cannot solve
+        // some Cloudflare managed challenges (e.g. trading212.com) and stays on
+        // the "Just a moment..." interstitial indefinitely.
+        const channel = process.env.SCTYS_PLAYWRIGHT_CHANNEL || 'chrome';
+        try {
+            browser = await chromium.launch({ ...launchOptions, channel });
+        } catch (error) {
+            browser = await chromium.launch(launchOptions);
+        }
     }
     return browser;
 }
@@ -357,11 +365,9 @@ async function createContext(proxy, headers, headlessMode = false) {
             'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Linux"',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-User': '?1',
-            'Sec-Fetch-Dest': 'document',
+            // Do not override Sec-Fetch-*/Upgrade-Insecure-Requests: the browser
+            // sets them for navigations and overriding them makes Cloudflare's
+            // managed challenge reject the request (stuck on "Just a moment...").
         }
     };
 
@@ -412,8 +418,40 @@ async function closeContext(contextId) {
     return false;
 }
 
+// Cloudflare and similar WAF interstitials (e.g. trading212.com) can satisfy
+// `networkidle` before the challenge finishes solving. Detect the interstitial
+// and wait for it to disappear so the real page content is read.
+async function isWafChallengePage(page) {
+    try {
+        const title = await page.title();
+        if (title.includes('Just a moment')) {
+            return true;
+        }
+        return await page.evaluate(() => {
+            if (!document.body || document.readyState !== 'complete') {
+                return false;
+            }
+            return !!document.querySelector(
+                '#challenge-running, #challenge-stage, #cf-challenge-running, #cf-chl-out'
+            );
+        });
+    } catch (error) {
+        return false;
+    }
+}
+
+async function waitForWafChallengeToFinish(page, timeout) {
+    const deadline = Date.now() + Math.min(timeout, 45000);
+    while (Date.now() < deadline) {
+        if (!(await isWafChallengePage(page))) {
+            return;
+        }
+        await page.waitForTimeout(1000);
+    }
+}
+
 // Navigate to URL and return response data
-async function navigate(contextId, url, timeout = 60000) {
+async function navigate(contextId, url, timeout = 60000, waitUntil = 'networkidle') {
     const ctx = contexts.get(contextId);
     if (!ctx) {
         throw new Error(`Context ${contextId} not found`);
@@ -423,15 +461,36 @@ async function navigate(contextId, url, timeout = 60000) {
 
     try {
         const response = await page.goto(url, {
-            waitUntil: 'networkidle',
+            waitUntil: waitUntil,
             timeout: timeout
         });
 
-        const statusCode = response ? response.status() : 200;
-        const ok = response ? response.ok() : true;
+        await waitForWafChallengeToFinish(page, timeout);
+
+        let statusCode = response ? response.status() : 200;
+        let ok = response ? response.ok() : true;
+        const reason = response ? response.statusText() : '';
+
+        // WAF challenge pages (e.g. barchart.com) return 202 and reload the page once
+        // the token is solved; the goto response reflects the challenge, not the final
+        // page. Read the real status from the navigation timing entry.
+        if (statusCode === 202) {
+            const finalStatus = await page
+                .evaluate(() => {
+                    const nav = performance.getEntriesByType('navigation')[0];
+                    return nav && typeof nav.responseStatus === 'number'
+                        ? nav.responseStatus
+                        : null;
+                })
+                .catch(() => null);
+            if (finalStatus !== null) {
+                statusCode = finalStatus;
+                ok = finalStatus >= 200 && finalStatus < 300;
+            }
+        }
+
         const finalUrl = page.url();
         const content = await page.content();
-        const reason = response ? response.statusText() : '';
         const cookies = await ctx.context.cookies();
 
         // Convert cookies to a simple map { name: value }
@@ -472,6 +531,32 @@ async function getContent(contextId) {
     return await ctx.page.content();
 }
 
+// Poll the context cookies until the named cookie appears or the timeout expires
+async function waitForCookie(contextId, cookieName, timeout = 60000) {
+    const ctx = contexts.get(contextId);
+    if (!ctx) {
+        throw new Error(`Context ${contextId} not found`);
+    }
+
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        const cookies = await ctx.context.cookies();
+        if (cookies.some(c => c.name === cookieName)) {
+            const cookieMap = {};
+            cookies.forEach(c => {
+                cookieMap[c.name] = c.value;
+            });
+            return { success: true, cookies: cookieMap };
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    return {
+        success: false,
+        reason: `Cookie ${cookieName} not found within ${timeout}ms`,
+        cookies: {}
+    };
+}
+
 // Set cookies for a context
 async function setCookies(contextId, cookies) {
     const ctx = contexts.get(contextId);
@@ -506,8 +591,20 @@ async function handleCommand(command) {
                 return { success: true, contextId };
 
             case 'navigate':
-                const navResult = await navigate(cmd.contextId, cmd.url, cmd.timeout);
+                const navResult = await navigate(
+                    cmd.contextId,
+                    cmd.url,
+                    cmd.timeout,
+                    cmd.waitUntil || 'networkidle'
+                );
                 return navResult;
+
+            case 'wait_for_cookie':
+                return await waitForCookie(
+                    cmd.contextId,
+                    cmd.cookieName,
+                    cmd.timeout
+                );
 
             case 'get_content':
                 const content = await getContent(cmd.contextId);

@@ -27,6 +27,28 @@ struct CommandRequest {
     cookies: Option<Vec<HashMap<String, String>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     headers: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "waitUntil")]
+    wait_until: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "cookieName")]
+    cookie_name: Option<String>,
+}
+
+impl CommandRequest {
+    fn form_command(action: String) -> Self {
+        Self {
+            action,
+            proxy: None,
+            context_id: None,
+            url: None,
+            timeout: None,
+            cookies: None,
+            headers: None,
+            wait_until: None,
+            cookie_name: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -140,13 +162,13 @@ impl PlaywrightClient {
 
     pub fn init(&self) -> Result<(), ScraperError> {
         let cmd = CommandRequest {
-            action: "init".to_string(),
             proxy: None,
             context_id: None,
             url: None,
             timeout: None,
             cookies: None,
             headers: None,
+            ..CommandRequest::form_command("init".to_string())
         };
 
         let resp = self.send_command(cmd)?;
@@ -165,13 +187,13 @@ impl PlaywrightClient {
         headers: Option<HashMap<String, String>>,
     ) -> Result<String, ScraperError> {
         let cmd = CommandRequest {
-            action: "create_context".to_string(),
             proxy,
             context_id: None,
             url: None,
             timeout: None,
             cookies: None,
             headers,
+            ..CommandRequest::form_command("create_context".to_string())
         };
 
         let resp = self.send_command(cmd)?;
@@ -191,14 +213,22 @@ impl PlaywrightClient {
         url: &str,
         timeout: Option<u64>,
     ) -> Result<Response, ScraperError> {
+        self.navigate_with_wait_until(context_id, url, timeout, None)
+    }
+
+    pub fn navigate_with_wait_until(
+        &self,
+        context_id: &str,
+        url: &str,
+        timeout: Option<u64>,
+        wait_until: Option<&str>,
+    ) -> Result<Response, ScraperError> {
         let cmd = CommandRequest {
-            action: "navigate".to_string(),
-            proxy: None,
             context_id: Some(context_id.to_string()),
             url: Some(url.to_string()),
             timeout,
-            cookies: None,
-            headers: None,
+            wait_until: wait_until.map(|w| w.to_string()),
+            ..CommandRequest::form_command("navigate".to_string())
         };
 
         let resp = self.send_command(cmd)?;
@@ -222,13 +252,8 @@ impl PlaywrightClient {
 
     pub fn get_content(&self, context_id: &str) -> Result<String, ScraperError> {
         let cmd = CommandRequest {
-            action: "get_content".to_string(),
-            proxy: None,
             context_id: Some(context_id.to_string()),
-            url: None,
-            timeout: None,
-            cookies: None,
-            headers: None,
+            ..CommandRequest::form_command("get_content".to_string())
         };
 
         let resp = self.send_command(cmd)?;
@@ -257,11 +282,7 @@ impl PlaywrightClient {
             .collect();
 
         let cmd = CommandRequest {
-            action: "set_cookies".to_string(),
-            proxy: None,
             context_id: Some(context_id.to_string()),
-            url: None,
-            timeout: None,
             cookies: Some(
                 cookie_vec
                     .into_iter()
@@ -273,7 +294,7 @@ impl PlaywrightClient {
                     })
                     .collect(),
             ),
-            headers: None,
+            ..CommandRequest::form_command("set_cookies".to_string())
         };
 
         let resp = self.send_command(cmd)?;
@@ -286,15 +307,38 @@ impl PlaywrightClient {
         Ok(())
     }
 
+    pub fn wait_for_cookie(
+        &self,
+        context_id: &str,
+        cookie_name: &str,
+        timeout_ms: u64,
+    ) -> Result<HashMap<String, String>, ScraperError> {
+        let cmd = CommandRequest {
+            context_id: Some(context_id.to_string()),
+            timeout: Some(timeout_ms),
+            cookie_name: Some(cookie_name.to_string()),
+            ..CommandRequest::form_command("wait_for_cookie".to_string())
+        };
+
+        let resp = self.send_command(cmd)?;
+        if !resp.success {
+            return Err(ScraperError::PlaywrightJs(format!(
+                "Cookie {cookie_name} not found: {:?}",
+                resp.reason
+            )));
+        }
+        Ok(resp.cookies.unwrap_or_default())
+    }
+
     pub fn close_context(&self, context_id: &str) -> Result<(), ScraperError> {
         let cmd = CommandRequest {
-            action: "close_context".to_string(),
             proxy: None,
             context_id: Some(context_id.to_string()),
             url: None,
             timeout: None,
             cookies: None,
             headers: None,
+            ..CommandRequest::form_command("close_context".to_string())
         };
 
         let resp = self.send_command(cmd)?;
@@ -308,13 +352,13 @@ impl PlaywrightClient {
 
     pub fn shutdown(&self) -> Result<(), ScraperError> {
         let cmd = CommandRequest {
-            action: "shutdown".to_string(),
             proxy: None,
             context_id: None,
             url: None,
             timeout: None,
             cookies: None,
             headers: None,
+            ..CommandRequest::form_command("shutdown".to_string())
         };
 
         let _ = self.send_command(cmd)?;
