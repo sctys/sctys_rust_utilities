@@ -33,7 +33,7 @@ impl<'a> FileCompress<'a> {
             Err(e) => {
                 let error_str = format!(
                     "Unable to create the compressed file {}. {e}",
-                    &full_path.display()
+                    full_path.display()
                 );
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}");
@@ -55,7 +55,7 @@ impl<'a> FileCompress<'a> {
             Err(e) => {
                 let error_str = format!(
                     "Unable to create the compressed file {}. {e}",
-                    &full_path.display()
+                    full_path.display()
                 );
                 self.project_logger.log_error(&error_str);
                 panic!("{error_str}");
@@ -74,7 +74,7 @@ impl<'a> FileCompress<'a> {
         let full_archive_path = archive_path.join(file_name);
         File::open(&full_path).map_or_else(
             |e| {
-                let error_str = format!("Unable to open the file {}. {e}", &full_path.display());
+                let error_str = format!("Unable to open the file {}. {e}", full_path.display());
                 self.project_logger.log_error(&error_str);
                 Err(e)
             },
@@ -85,16 +85,14 @@ impl<'a> FileCompress<'a> {
                         |e| {
                             let error_str = format!(
                                 "Unable to append file {} to tar file. {e}",
-                                &full_path.display()
+                                full_path.display()
                             );
                             self.project_logger.log_error(&error_str);
                             Err(e)
                         },
                         |_| {
-                            let debug_str = format!(
-                                "File {} has been append to tar file",
-                                &full_path.display()
-                            );
+                            let debug_str =
+                                format!("File {} has been append to tar file", full_path.display());
                             self.project_logger.log_debug(&debug_str);
                             Ok(())
                         },
@@ -115,16 +113,14 @@ impl<'a> FileCompress<'a> {
                 |e| {
                     let error_str = format!(
                         "Unable to append folder {} to tar gz. {e}",
-                        &folder_path.display()
+                        folder_path.display()
                     );
                     self.project_logger.log_error(&error_str);
                     Err(e)
                 },
                 |_| {
-                    let debug_str = format!(
-                        "Folder {} has been append to tar gz",
-                        &folder_path.display()
-                    );
+                    let debug_str =
+                        format!("Folder {} has been append to tar gz", folder_path.display());
                     self.project_logger.log_debug(&debug_str);
                     Ok(())
                 },

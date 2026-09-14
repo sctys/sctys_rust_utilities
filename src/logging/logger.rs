@@ -39,7 +39,7 @@ impl ProjectLogger {
     pub fn new_logger(logger_path: &Path, logger_name: &str) -> Self {
         let error_logger_name = format!("{logger_name}_error");
         let standard_logger_file_name = format!("{logger_name}.log");
-        let error_logger_file_name = format!("{}.log", &error_logger_name);
+        let error_logger_file_name = format!("{}.log", error_logger_name);
         let full_logger_path_file = logger_path.join(standard_logger_file_name);
         let full_error_logger_path_file = logger_path.join(error_logger_file_name);
         let archive_logger_file_name = full_logger_path_file

@@ -257,7 +257,7 @@ impl<'a> ClickHouse<'a> {
                     SELECT *, toUnixTimestamp(now()) AS insert_time FROM file('{}/{file_name}', Parquet)",
                 Self::LOCAL_HOST_PORT,
                 Self::USER_NAME,
-                &self.password,
+                self.password,
                 folder_path.display(),
             ))
             .status()
@@ -386,7 +386,7 @@ impl<'a> ClickHouse<'a> {
             .arg(format!("SELECT * FROM remote('{}', '{database}.{table_name}', '{}', '{}') INTO OUTFILE '{}/{file_name}' FORMAT Parquet",
                 Self::LOCAL_HOST_PORT,
                 Self::USER_NAME,
-                &self.password,
+                self.password,
                 folder_path.display(),
             ))
             .status()
@@ -426,7 +426,7 @@ impl<'a> ClickHouse<'a> {
             .arg(format!("SELECT * FROM remote('{}', '{database}.{table_name}', '{}', '{}') WHERE {filter_str} INTO OUTFILE '{}/{file_name}' FORMAT Parquet",
                 Self::LOCAL_HOST_PORT,
                 Self::USER_NAME,
-                &self.password,
+                self.password,
                 folder_path.display(),
             ))
             .status()

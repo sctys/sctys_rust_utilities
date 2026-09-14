@@ -553,15 +553,13 @@ impl<'a> FileIO<'a> {
         let full_path = folder_path.join(file);
         fs::read_to_string(&full_path).map_or_else(
             |e| {
-                let error_str = format!(
-                    "Unable to load file {} as string. {e}",
-                    &full_path.display()
-                );
+                let error_str =
+                    format!("Unable to load file {} as string. {e}", full_path.display());
                 self.project_logger.log_error(&error_str);
                 Err(e)
             },
             |string| {
-                let debug_str = format!("File {} loaded.", &full_path.display());
+                let debug_str = format!("File {} loaded.", full_path.display());
                 self.project_logger.log_debug(&debug_str);
                 Ok(string)
             },
@@ -577,15 +575,13 @@ impl<'a> FileIO<'a> {
         let full_path = folder_path.join(file);
         fs::write(&full_path, content).map_or_else(
             |e| {
-                let error_str = format!(
-                    "Unable to save string to file {}. {e}",
-                    &full_path.display()
-                );
+                let error_str =
+                    format!("Unable to save string to file {}. {e}", full_path.display());
                 self.project_logger.log_error(&error_str);
                 Err(e)
             },
             |()| {
-                let debug_str = format!("File {} saved.", &full_path.display());
+                let debug_str = format!("File {} saved.", full_path.display());
                 self.project_logger.log_debug(&debug_str);
                 Ok(())
             },
@@ -601,15 +597,13 @@ impl<'a> FileIO<'a> {
         let full_path = folder_path.join(file);
         tokio::fs::write(&full_path, content).await.map_or_else(
             |e| {
-                let error_str = format!(
-                    "Unable to save string to file {}. {e}",
-                    &full_path.display()
-                );
+                let error_str =
+                    format!("Unable to save string to file {}. {e}", full_path.display());
                 self.project_logger.log_error(&error_str);
                 Err(e)
             },
             |()| {
-                let debug_str = format!("File {} saved.", &full_path.display());
+                let debug_str = format!("File {} saved.", full_path.display());
                 self.project_logger.log_debug(&debug_str);
                 Ok(())
             },
@@ -635,7 +629,7 @@ impl<'a> FileIO<'a> {
 
         match File::open(&full_path) {
             Err(e) => {
-                let error_str = format!("Unable to load file {} as csv. {e}", &full_path.display());
+                let error_str = format!("Unable to load file {} as csv. {e}", full_path.display());
                 self.project_logger.log_error(&error_str);
                 Err(PolarsError::IO {
                     error: e.into(),
@@ -643,7 +637,7 @@ impl<'a> FileIO<'a> {
                 })
             }
             Ok(file) => {
-                let debug_str = format!("File {} loaded.", &full_path.display());
+                let debug_str = format!("File {} loaded.", full_path.display());
                 self.project_logger.log_debug(&debug_str);
 
                 // Use CsvReader::new with the file.
@@ -674,12 +668,12 @@ impl<'a> FileIO<'a> {
         let full_path = folder_path.join(file);
         File::create(&full_path).map_or_else(
             |e| {
-                let error_str = format!("Unable to create file {}. {}", &full_path.display(), e);
+                let error_str = format!("Unable to create file {}. {}", full_path.display(), e);
                 self.project_logger.log_error(&error_str);
                 Err(e)
             },
             |file_writer| {
-                let debug_str = format!("File {} created.", &full_path.display());
+                let debug_str = format!("File {} created.", full_path.display());
                 self.project_logger.log_debug(&debug_str);
                 Ok(file_writer)
             },
@@ -720,7 +714,7 @@ impl<'a> FileIO<'a> {
                 Err(e)
             },
             |lazy_frame| {
-                let debug_str = format!("File {} scanned.", &full_path.display());
+                let debug_str = format!("File {} scanned.", full_path.display());
                 self.project_logger.log_debug(&debug_str);
                 Ok(lazy_frame)
             },
@@ -736,12 +730,12 @@ impl<'a> FileIO<'a> {
         let full_path = folder_path.join(file);
         File::open(&full_path).map_or_else(
             |e| {
-                let error_str = format!("Unable to load file {}. {e}", &full_path.display());
+                let error_str = format!("Unable to load file {}. {e}", full_path.display());
                 self.project_logger.log_error(&error_str);
                 Err(e)
             },
             |parquet_reader| {
-                let debug_str = format!("File {} loaded.", &full_path.display());
+                let debug_str = format!("File {} loaded.", full_path.display());
                 self.project_logger.log_debug(&debug_str);
                 Ok(ParquetReader::new(parquet_reader))
             },
@@ -795,7 +789,7 @@ impl<'a> FileIO<'a> {
                 Err(e)
             },
             |lazy_frame| {
-                let debug_str = format!("File {} scanned.", &full_path.display());
+                let debug_str = format!("File {} scanned.", full_path.display());
                 self.project_logger.log_debug(&debug_str);
                 Ok(lazy_frame)
             },
@@ -820,7 +814,7 @@ impl<'a> FileIO<'a> {
                 Err(e)
             },
             |()| {
-                let debug_str = format!("File {}/{file} sinked.", &folder_path.display());
+                let debug_str = format!("File {}/{file} sinked.", folder_path.display());
                 self.project_logger.log_debug(&debug_str);
                 Ok(())
             },

@@ -461,7 +461,7 @@ mod tests {
             .solve_turnstile(website_url, website_id)
             .await
             .unwrap();
-        println!("Token: {}", &token);
+        println!("Token: {}", token);
         let verify_url = "https://www.fotmob.com/api/turnstile/verify";
         let client = reqwest::Client::new();
         let res = client.post(verify_url)

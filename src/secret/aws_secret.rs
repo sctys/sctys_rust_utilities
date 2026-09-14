@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use aws_config::{meta::region::RegionProviderChain, BehaviorVersion};
 use aws_sdk_s3::config::http::HttpResponse;
 use aws_sdk_ssm::{

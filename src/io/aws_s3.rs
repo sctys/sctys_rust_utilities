@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use crate::logger::ProjectLogger;
 use crate::time_operation;
 use crate::time_operation::SecPrecision;
@@ -527,7 +529,7 @@ impl<'a> AWSFileIO<'a> {
         let temp_file = File::open(&full_local_path).await.map_err(|e| {
             let error_str = format!(
                 "Unable to open the local file {}. {e}",
-                &full_local_path.display()
+                full_local_path.display()
             );
             self.project_logger.log_error(&error_str);
             AWSWriteFileError::IOError(e)
@@ -536,7 +538,7 @@ impl<'a> AWSFileIO<'a> {
         let metadata = temp_file.metadata().await.map_err(|e| {
             let error_str = format!(
                 "Unable to get the metadata for file {}. {e}",
-                &full_local_path.display()
+                full_local_path.display()
             );
             self.project_logger.log_error(&error_str);
             AWSWriteFileError::IOError(e)
@@ -568,7 +570,7 @@ impl<'a> AWSFileIO<'a> {
         if let Err(e) = temp_file.read_to_end(&mut bytes).await {
             let error_str = format!(
                 "Unable to read the local file {} as bytes. {e}",
-                &full_local_path.display()
+                full_local_path.display()
             );
             self.project_logger.log_error(&error_str);
             return Err(AWSWriteFileError::IOError(e));
@@ -700,7 +702,7 @@ impl<'a> AWSFileIO<'a> {
                         Err(e) => {
                             let error_str = format!(
                                 "Unable to read the local file {} part {part_number} as bytes. {e}",
-                                &full_local_path.display()
+                                full_local_path.display()
                             );
                             self.project_logger.log_error(&error_str);
                             return Err(AWSWriteFileError::IOError(e));
