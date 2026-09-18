@@ -233,7 +233,7 @@ impl ProxyResult {
 
     pub fn get_cap_solver_proxy(&self) -> String {
         format!(
-            "http:{}:{}:{}:{}",
+            "{}:{}:{}:{}",
             self.proxy_address, self.port, self.username, self.password
         )
     }

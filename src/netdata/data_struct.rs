@@ -53,6 +53,7 @@ pub enum ScraperClient<'a> {
 pub enum Scraper {
     Reqwest(bool),
     Rquest(bool),
+    RquestCf,
     Playwright(BrowseOptions),
     PlaywrightJs,
 }
@@ -103,6 +104,7 @@ impl FilterOptions {
     }
 }
 
+#[derive(Clone)]
 pub struct RequestOptions {
     pub connect_timeout: Duration,
     pub timeout: Duration,

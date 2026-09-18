@@ -138,25 +138,35 @@ impl<'a> CapSolver<'a> {
                 .send()
                 .await;
             match res {
-                Ok(r) => match r.error_for_status() {
-                    Ok(response) => match response.json::<CapSolverResponse>().await {
-                        Ok(cap_solver_response) => {
-                            if cap_solver_response.error_id == 0 {
-                                return Ok(cap_solver_response);
-                            } else {
-                                error = Some(CapSolverError::Json(serde::de::Error::custom(
-                                    cap_solver_response.status,
-                                )))
+                Ok(r) => {
+                    let status = r.status();
+                    if status.is_client_error() && status != reqwest::StatusCode::TOO_MANY_REQUESTS
+                    {
+                        let body = r.text().await.unwrap_or_default();
+                        return Err(CapSolverError::Json(serde::de::Error::custom(format!(
+                            "createTask rejected with {status}: {body}"
+                        ))));
+                    }
+                    match r.error_for_status() {
+                        Ok(response) => match response.json::<CapSolverResponse>().await {
+                            Ok(cap_solver_response) => {
+                                if cap_solver_response.error_id == 0 {
+                                    return Ok(cap_solver_response);
+                                } else {
+                                    error = Some(CapSolverError::Json(serde::de::Error::custom(
+                                        cap_solver_response.status,
+                                    )))
+                                }
                             }
-                        }
+                            Err(e) => {
+                                error = Some(CapSolverError::Reqwest(e));
+                            }
+                        },
                         Err(e) => {
                             error = Some(CapSolverError::Reqwest(e));
                         }
-                    },
-                    Err(e) => {
-                        error = Some(CapSolverError::Reqwest(e));
                     }
-                },
+                }
                 Err(e) => {
                     error = Some(CapSolverError::Reqwest(e));
                 }
