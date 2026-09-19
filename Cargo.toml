@@ -28,6 +28,7 @@ playwright-rust = { path = "../playwright-rust" }
 polars = {version = "0.45", features = ["lazy", "temporal", "describe", "json", "parquet", "dtype-datetime", "streaming"]}
 mongodb = "3.2"
 rand = {version = "0.8.5", features = ["std"]}
+redis = { version = "1", features = ["tokio-comp", "connection-manager", "script"] }
 reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots", "gzip", "cookies"]}
 wreq = {version ="5", features = ["cookies", "json"]}
 wreq-util = "2"
@@ -39,8 +40,8 @@ serde_json = "1.0"
 strum = "0.27"
 strum_macros = "0.27"
 tar = "0.4"
+thiserror = "2"
 tokio = {version = "1", features = ["full"]}
 toml = "0.5"
 tqdm = "0.4"
 walkdir = "2.4"
-
