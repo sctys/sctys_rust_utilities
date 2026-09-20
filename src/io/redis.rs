@@ -12,6 +12,21 @@ use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tokio::time::{sleep, timeout, Instant};
 
+/// URL for a Redis server running locally on the default Redis port.
+///
+/// Downstream projects can pass this value to [`RedisSnapshotConfig::new`] or
+/// import it directly as `sctys_rust_utilities::redis::REDIS_PATH`.
+///
+/// # Examples
+///
+/// ```
+/// use sctys_rust_utilities::redis::{RedisSnapshotConfig, REDIS_PATH};
+///
+/// let config = RedisSnapshotConfig::new(REDIS_PATH, "my-project");
+/// assert_eq!(config.url, REDIS_PATH);
+/// ```
+pub const REDIS_PATH: &str = "redis://127.0.0.1:6379";
+
 /// Failures are returned to the caller; credentials and connection URLs are not logged.
 #[derive(Debug, thiserror::Error)]
 pub enum SnapshotError {
