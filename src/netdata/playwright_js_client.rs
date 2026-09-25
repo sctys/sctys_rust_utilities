@@ -307,6 +307,50 @@ impl PlaywrightClient {
         Ok(())
     }
 
+    /// Sets cookies scoped to `url`, required when the cookie is applied
+    /// before the first navigation (the context page is still on about:blank
+    /// and has no usable host to derive the cookie domain from).
+    pub fn set_cookies_for_url(
+        &self,
+        context_id: &str,
+        cookies: HashMap<String, String>,
+        url: &str,
+    ) -> Result<(), ScraperError> {
+        let cookie_vec: Vec<Cookie> = cookies
+            .iter()
+            .map(|(name, value)| Cookie {
+                name: name.clone(),
+                value: value.clone(),
+            })
+            .collect();
+
+        let cmd = CommandRequest {
+            context_id: Some(context_id.to_string()),
+            cookies: Some(
+                cookie_vec
+                    .into_iter()
+                    .map(|c| {
+                        let mut map = HashMap::new();
+                        map.insert("name".to_string(), c.name);
+                        map.insert("value".to_string(), c.value);
+                        map
+                    })
+                    .collect(),
+            ),
+            url: Some(url.to_string()),
+            ..CommandRequest::form_command("set_cookies".to_string())
+        };
+
+        let resp = self.send_command(cmd)?;
+        if !resp.success {
+            return Err(ScraperError::PlaywrightJs(format!(
+                "Failed to set cookies: {:?}",
+                resp.reason
+            )));
+        }
+        Ok(())
+    }
+
     pub fn wait_for_cookie(
         &self,
         context_id: &str,

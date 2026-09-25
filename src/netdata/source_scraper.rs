@@ -6,13 +6,17 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use chrono::Utc;
 use playwright_rust::{
     api::{Browser, BrowserContext, Page, Viewport},
     Playwright,
 };
+use serde::{Deserialize, Serialize};
+use tokio::sync::OnceCell;
 use wreq_util::Emulation;
 
 use crate::{
+    io::redis::{RedisKvClient, RedisSnapshotConfig, REDIS_PATH},
     logger::ProjectLogger,
     netdata::{capsolver::CapSolver, playwright_js_client::PlaywrightClient},
     secret::aws_secret::Secret,
@@ -21,7 +25,7 @@ use crate::{
 
 use super::{
     data_struct::{BrowseOptions, RequestOptions, Response, ScraperError},
-    proxy::ScraperProxy,
+    proxy::{ProxyResult, ScraperProxy},
     requests_ip_rotate::{ApiGateway, ApiGatewayConfig, ApiGatewayRegion},
 };
 
@@ -33,6 +37,23 @@ const LETSENCRYPT_R13_CERT: &[u8] = include_bytes!("letsencrypt_r13.pem");
 const STEALTH_INIT_SCRIPT: &str = include_str!("./js/stealth_init_script.js");
 const PLAYWRIGHT_TMP_ENV: &str = "SCTYS_PLAYWRIGHT_TMP";
 const PLAYWRIGHT_TMP_DIR: &str = "sctys_playwright_tmp";
+
+/// Persists the `cf_clearance` cookie minted by the playwright js flow so
+/// subsequent requests through the same proxy exit skip the managed challenge
+/// entirely. Keys are proxy-scoped because Cloudflare binds the clearance to
+/// the originating IP and user agent; a clearance reused from another IP is
+/// rejected and must be re-solved.
+const PLAYWRIGHT_JS_CLEARANCE_KEY_PREFIX: &str = "cf_clearance";
+const PLAYWRIGHT_JS_CLEARANCE_PERSIST_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedJsClearance {
+    site_host: String,
+    proxy_key: String,
+    cookie_name: String,
+    cookie_value: String,
+    persisted_at: i64,
+}
 
 #[derive(Clone, Copy)]
 pub enum RquestBrowser {
@@ -1275,45 +1296,70 @@ impl<'a> SourceScraper<'a> {
         playwright: &PlaywrightClient,
         scraper_proxy: Option<&mut ScraperProxy<'a>>,
     ) -> Result<Response, ScraperError> {
+        self.request_with_playwright_js_with_clearance_ttl(
+            url,
+            request_options,
+            playwright,
+            scraper_proxy,
+            PLAYWRIGHT_JS_CLEARANCE_PERSIST_TTL,
+        )
+        .await
+    }
+
+    pub async fn request_with_playwright_js_with_clearance_ttl(
+        &self,
+        url: &str,
+        request_options: &RequestOptions,
+        playwright: &PlaywrightClient,
+        scraper_proxy: Option<&mut ScraperProxy<'a>>,
+        clearance_persistence_ttl: Duration,
+    ) -> Result<Response, ScraperError> {
         let debug_log = format!("Attempting to make a request to {} with playwright js", url);
         self.logger.log_debug(&debug_log);
         let headers = request_options.convert_header_map_to_map();
-        if let Some(scraper_proxy) = scraper_proxy {
-            let proxy_result = scraper_proxy.generate_proxy().await?;
-            let proxy = proxy_result.get_playwright_proxy();
-            let context_id = playwright.create_context(Some(proxy), headers)?;
-            match playwright.navigate(
-                &context_id,
-                url,
-                Some(request_options.timeout.as_millis() as u64),
-            ) {
-                Ok(response) => {
-                    if request_options.proxy_block_count > 0 && response.status_code == 403 {
-                        scraper_proxy.add_proxy_block_count(&proxy_result);
+        let mut scraper_proxy = scraper_proxy;
+        if let Some(scraper_proxy) = scraper_proxy.as_mut() {
+            prefer_persisted_clearance_proxy(self, scraper_proxy, url).await;
+        }
+        let proxy_result = match scraper_proxy.as_mut() {
+            Some(scraper_proxy) => Some(scraper_proxy.generate_proxy().await?),
+            None => None,
+        };
+        let proxy_settings = proxy_result
+            .as_ref()
+            .map(|proxy| proxy.get_playwright_proxy());
+        let context_id = playwright.create_context(proxy_settings, headers)?;
+        let result = navigate_with_clearance_persistence(
+            self,
+            playwright,
+            &context_id,
+            url,
+            request_options,
+            proxy_result.as_ref(),
+            clearance_persistence_ttl,
+        )
+        .await;
+        match result {
+            Ok(response) => {
+                if request_options.proxy_block_count > 0 && response.status_code == 403 {
+                    if let (Some(scraper_proxy), Some(proxy_result)) =
+                        (scraper_proxy.as_mut(), proxy_result.as_ref())
+                    {
+                        scraper_proxy.add_proxy_block_count(proxy_result);
                     }
-                    playwright.close_context(&context_id)?;
-                    Ok(response)
                 }
-                Err(e) => {
-                    playwright.close_context(&context_id)?;
-                    Err(e)
+                if let Some(scraper_proxy) = scraper_proxy.as_mut() {
+                    scraper_proxy.clear_sticky_proxy();
                 }
+                playwright.close_context(&context_id)?;
+                Ok(response)
             }
-        } else {
-            let context_id = playwright.create_context(None, headers)?;
-            match playwright.navigate(
-                &context_id,
-                url,
-                Some(request_options.timeout.as_millis() as u64),
-            ) {
-                Ok(response) => {
-                    playwright.close_context(&context_id)?;
-                    Ok(response)
+            Err(e) => {
+                if let Some(scraper_proxy) = scraper_proxy.as_mut() {
+                    scraper_proxy.clear_sticky_proxy();
                 }
-                Err(e) => {
-                    playwright.close_context(&context_id)?;
-                    Err(e)
-                }
+                playwright.close_context(&context_id)?;
+                Err(e)
             }
         }
     }
@@ -1376,6 +1422,228 @@ impl<'a> SourceScraper<'a> {
     }
 }
 
+/// Lookups against the shared Redis KV; failures degrade to no persistence
+/// instead of breaking the scrape.
+async fn playwright_clearance_kv() -> Option<&'static RedisKvClient> {
+    static KV: OnceCell<Option<RedisKvClient>> = OnceCell::const_new();
+    KV.get_or_init(|| async {
+        match RedisKvClient::connect(RedisSnapshotConfig::new(REDIS_PATH, "playwright_js_cf")).await
+        {
+            Ok(kv) => Some(kv),
+            Err(e) => {
+                let msg = format!("PlaywrightJs cf_clearance persistence disabled. {e}");
+                eprintln!("{msg}");
+                None
+            }
+        }
+    })
+    .await
+    .as_ref()
+}
+
+fn url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://")?.1;
+    let authority = rest.split('/').next()?;
+    let host = authority.split(':').next()?;
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
+fn playwright_clearance_key(site_host: &str, proxy: Option<&ProxyResult>) -> String {
+    match proxy {
+        Some(proxy) => format!(
+            "{}:{}:{}:{}",
+            PLAYWRIGHT_JS_CLEARANCE_KEY_PREFIX, site_host, proxy.proxy_address, proxy.port
+        ),
+        None => format!(
+            "{}:{}:direct:0",
+            PLAYWRIGHT_JS_CLEARANCE_KEY_PREFIX, site_host
+        ),
+    }
+}
+
+async fn navigate_with_clearance_persistence(
+    source_scraper: &SourceScraper<'_>,
+    playwright: &PlaywrightClient,
+    context_id: &str,
+    url: &str,
+    request_options: &RequestOptions,
+    proxy: Option<&ProxyResult>,
+    clearance_persistence_ttl: Duration,
+) -> Result<Response, ScraperError> {
+    let kv = playwright_clearance_kv().await;
+    let storage_key = url_host(url).map(|site_host| playwright_clearance_key(&site_host, proxy));
+    let mut hydrated = false;
+    if let (Some(kv), Some(storage_key)) = (kv, storage_key.as_deref()) {
+        match kv.get_string(storage_key).await {
+            Ok(Some(record_json)) => {
+                match serde_json::from_str::<PersistedJsClearance>(&record_json) {
+                    Ok(record) => {
+                        let mut cookies = HashMap::new();
+                        cookies.insert(record.cookie_name.clone(), record.cookie_value);
+                        match playwright.set_cookies_for_url(context_id, cookies, url) {
+                            Ok(()) => {
+                                let debug_log = format!(
+                                    "Hydrated {} cookie for {url} from redis",
+                                    record.cookie_name
+                                );
+                                source_scraper.logger.log_debug(&debug_log);
+                                hydrated = true;
+                            }
+                            Err(e) => {
+                                let warn_str =
+                                    format!("Unable to hydrate persisted cookies for {url}. {e}");
+                                source_scraper.logger.log_warn(&warn_str);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        let warn_str =
+                            format!("Malformed persisted clearance for {url}, evicting. {err}");
+                        source_scraper.logger.log_warn(&warn_str);
+                        let _ = kv.delete(storage_key).await;
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                let warn_str = format!("Unable to read persisted clearance for {url}. {e}");
+                source_scraper.logger.log_warn(&warn_str);
+            }
+        }
+    }
+    let navigate_result = playwright.navigate(
+        context_id,
+        url,
+        Some(request_options.timeout.as_millis() as u64),
+    );
+    match navigate_result {
+        Err(e) => Err(e),
+        Ok(response) => {
+            if let (Some(kv), Some(storage_key)) = (kv, storage_key.as_deref()) {
+                if response.cookies.contains_key("cf_clearance") {
+                    if let Some(site_host) = url_host(url) {
+                        let proxy_key = proxy
+                            .map(|proxy| format!("{}:{}", proxy.proxy_address, proxy.port))
+                            .unwrap_or_else(|| "direct:0".to_string());
+                        let record = PersistedJsClearance {
+                            site_host,
+                            proxy_key,
+                            cookie_name: "cf_clearance".to_string(),
+                            cookie_value: response.cookies["cf_clearance"].clone(),
+                            persisted_at: Utc::now().timestamp(),
+                        };
+                        match serde_json::to_string(&record) {
+                            Ok(record_json) => {
+                                if let Err(e) = kv
+                                    .set_string_with_ttl(
+                                        storage_key,
+                                        &record_json,
+                                        clearance_persistence_ttl,
+                                    )
+                                    .await
+                                {
+                                    let warn_str =
+                                        format!("Unable to persist cf_clearance for {url}. {e}");
+                                    source_scraper.logger.log_warn(&warn_str);
+                                }
+                            }
+                            Err(e) => {
+                                let warn_str =
+                                    format!("Unable to serialize persisted clearance. {e}");
+                                source_scraper.logger.log_warn(&warn_str);
+                            }
+                        }
+                    }
+                } else if hydrated && response.status_code >= 400 {
+                    if let Err(e) = kv.delete(storage_key).await {
+                        let warn_str = format!("Unable to evict stale cf_clearance for {url}. {e}");
+                        source_scraper.logger.log_warn(&warn_str);
+                    }
+                }
+            }
+            Ok(response)
+        }
+    }
+}
+
+/// Prefer drawing a proxy that already has a persisted `cf_clearance`, so the
+/// scrape reuses a solved challenge instead of paying for a new one. Removes
+/// persisted records whose proxy left the pool (e.g. weekly provider
+/// rotations), keeping the storage aligned with the live pool instead of
+/// accumulating dead entries until their TTL lapses.
+async fn prefer_persisted_clearance_proxy(
+    source_scraper: &SourceScraper<'_>,
+    scraper_proxy: &mut ScraperProxy<'_>,
+    url: &str,
+) {
+    let Some(kv) = playwright_clearance_kv().await else {
+        return;
+    };
+    let Some(site_host) = url_host(url) else {
+        return;
+    };
+    if let Err(e) = scraper_proxy.refresh_pool_list().await {
+        let warn_str = format!("Unable to refresh persisted proxy pool for {url}. {e}");
+        source_scraper.logger.log_warn(&warn_str);
+        return;
+    }
+    let key_marker = format!("{PLAYWRIGHT_JS_CLEARANCE_KEY_PREFIX}:{site_host}");
+    let pattern = format!("{PLAYWRIGHT_JS_CLEARANCE_KEY_PREFIX}:*");
+    let cached_keys = match kv.global_pattern_keys(&pattern).await {
+        Ok(cached_keys) => {
+            let debug_log = format!(
+                "Scanned {} persisted clearances for {url}",
+                cached_keys.len()
+            );
+            source_scraper.logger.log_debug(&debug_log);
+            cached_keys
+        }
+        Err(e) => {
+            let warn_str = format!("Unable to scan persisted clearances for {site_host}. {e}");
+            source_scraper.logger.log_warn(&warn_str);
+            return;
+        }
+    };
+    let mut matching_proxies = Vec::new();
+    for cached_key in cached_keys {
+        let Some(key_suffix) = cached_key
+            .rsplit_once(&key_marker)
+            .map(|(_, suffix)| suffix.trim_start_matches(':'))
+        else {
+            continue;
+        };
+        let mut parts = key_suffix.split(':').rev();
+        let port = match parts.next().and_then(|port| port.parse::<u32>().ok()) {
+            Some(port) => port,
+            None => {
+                let _ = kv.delete(&cached_key).await;
+                continue;
+            }
+        };
+        let Some(proxy_address) = parts.next() else {
+            let _ = kv.delete(&cached_key).await;
+            continue;
+        };
+        match scraper_proxy.find_proxy(proxy_address, port) {
+            Some(proxy) => matching_proxies.push(proxy),
+            None => {
+                let _ = kv.delete(&cached_key).await;
+            }
+        }
+    }
+    if let Some(proxy) = matching_proxies.first() {
+        let debug_log = format!(
+            "Preferring persisted clearance proxy {}:{} for {url}",
+            proxy.proxy_address, proxy.port
+        );
+        source_scraper.logger.log_debug(&debug_log);
+        scraper_proxy.set_sticky_proxy(proxy.clone());
+    }
+}
 #[cfg(test)]
 mod tests {
     use std::{env, io, path::Path, sync::Arc, time::Duration};

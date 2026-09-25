@@ -4,7 +4,10 @@
 //! cooperative leases, not exactly-once processing or fencing of external writes.
 #![doc = include_str!("../../docs/redis.md")]
 
-use ::redis::{aio::ConnectionManager, aio::PubSub, AsyncCommands, Client, Script};
+use ::redis::{
+    aio::ConnectionManager, aio::PubSub, AsyncCommands, Client, ExistenceCheck, Script, SetExpiry,
+    SetOptions,
+};
 use futures::StreamExt;
 use serde::de::DeserializeOwned;
 use serde_derive::{Deserialize, Serialize};
@@ -446,6 +449,150 @@ impl RedisSnapshotClient {
     }
 }
 
+/// Plain key/value Redis client with TTL and atomic NX writes.
+///
+/// Uses the same [`RedisSnapshotConfig`] connection settings as [`RedisSnapshotClient`],
+/// so both can share one server with one configuration style. Keys are namespaced as
+/// `kv:<namespace>:<key>` and never collide with snapshot keys.
+///
+/// # Examples
+///
+/// ```
+/// use sctys_rust_utilities::io::redis::{RedisKvClient, RedisSnapshotConfig, REDIS_PATH};
+///
+/// # async fn example() -> Result<(), sctys_rust_utilities::redis::SnapshotError> {
+/// let config = RedisSnapshotConfig::new(REDIS_PATH, "my-project");
+/// let client = RedisKvClient::connect(config).await?;
+/// client.set_string_with_ttl("key", "value", std::time::Duration::from_secs(60)).await?;
+/// assert_eq!(client.get_string("key").await?, Some("value".to_owned()));
+/// client.delete("key").await?;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone)]
+pub struct RedisKvClient {
+    inner: Arc<KvInner>,
+}
+
+struct KvInner {
+    config: RedisSnapshotConfig,
+    connection: ConnectionManager,
+}
+
+impl RedisKvClient {
+    pub async fn connect(config: RedisSnapshotConfig) -> SnapshotResult<Self> {
+        config.validate()?;
+        let client = Client::open(config.url.as_str())?;
+        let manager_config = ::redis::aio::ConnectionManagerConfig::new()
+            .set_connection_timeout(Some(config.connection_timeout))
+            .set_response_timeout(Some(config.request_timeout));
+        let connection = client
+            .get_connection_manager_with_config(manager_config)
+            .await?;
+        Ok(Self {
+            inner: Arc::new(KvInner { config, connection }),
+        })
+    }
+
+    pub fn config(&self) -> &RedisSnapshotConfig {
+        &self.inner.config
+    }
+
+    fn kv_key(&self, key: &str) -> SnapshotResult<String> {
+        if key.is_empty() {
+            return Err(SnapshotError::InvalidConfiguration("key must be nonempty"));
+        }
+        Ok(format!(
+            "kv:{}:{}",
+            encode(&self.inner.config.namespace),
+            encode(key)
+        ))
+    }
+
+    fn validate_duration(&self, duration: Duration) -> SnapshotResult<()> {
+        let millis = duration.as_millis();
+        if millis == 0 || millis > i64::MAX as u128 {
+            return Err(SnapshotError::InvalidConfiguration(
+                "duration must be positive and fit Redis milliseconds",
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn get_string(&self, key: &str) -> SnapshotResult<Option<String>> {
+        let mut connection = self.inner.connection.clone();
+        let value: Option<String> = connection.get(self.kv_key(key)?).await?;
+        Ok(value)
+    }
+
+    pub async fn set_string(&self, key: &str, value: &str) -> SnapshotResult<()> {
+        let mut connection = self.inner.connection.clone();
+        connection.set::<_, _, ()>(self.kv_key(key)?, value).await?;
+        Ok(())
+    }
+
+    pub async fn set_string_with_ttl(
+        &self,
+        key: &str,
+        value: &str,
+        ttl: Duration,
+    ) -> SnapshotResult<()> {
+        self.validate_duration(ttl)?;
+        let options = SetOptions::default().with_expiration(SetExpiry::PX(ttl.as_millis() as u64));
+        let mut connection = self.inner.connection.clone();
+        connection
+            .set_options::<_, _, ()>(self.kv_key(key)?, value, options)
+            .await?;
+        Ok(())
+    }
+
+    /// Atomic `SET NX PX`. Returns `false` when the key already exists; the existing value is kept.
+    pub async fn set_string_if_absent_ttl(
+        &self,
+        key: &str,
+        value: &str,
+        ttl: Duration,
+    ) -> SnapshotResult<bool> {
+        self.validate_duration(ttl)?;
+        let options = SetOptions::default()
+            .conditional_set(ExistenceCheck::NX)
+            .with_expiration(SetExpiry::PX(ttl.as_millis() as u64));
+        let mut connection = self.inner.connection.clone();
+        let set = connection
+            .set_options::<_, _, Option<()>>(self.kv_key(key)?, value, options)
+            .await?;
+        Ok(set.is_some())
+    }
+
+    pub async fn time_to_live(&self, key: &str) -> SnapshotResult<Option<Duration>> {
+        let mut connection = self.inner.connection.clone();
+        let millis: Option<i64> = connection.pttl(self.kv_key(key)?).await?;
+        match millis {
+            None => Ok(None),
+            Some(millis) if millis < 0 || millis == -1 => Ok(None),
+            Some(millis) => Ok(Some(Duration::from_millis(millis as u64))),
+        }
+    }
+
+    pub async fn delete(&self, key: &str) -> SnapshotResult<()> {
+        let mut connection = self.inner.connection.clone();
+        connection.del::<_, ()>(self.kv_key(key)?).await?;
+        Ok(())
+    }
+
+    /// Lists keys matching a glob pattern scoped to this client's namespace.
+    /// The pattern is spliced in unencoded after the encoded namespace so
+    /// wildcard characters reach Redis; the stored key part itself remains
+    /// length-prefixed and can be recovered by locating the segment marker
+    /// inside the returned raw key.
+    pub async fn global_pattern_keys(&self, pattern: &str) -> SnapshotResult<Vec<String>> {
+        let mut connection = self.inner.connection.clone();
+        let full_pattern = format!("kv:{}:*{}", encode(&self.inner.config.namespace), pattern);
+        let keys: Vec<String> = connection.keys(full_pattern).await?;
+        Ok(keys)
+    }
+}
+
 /// Pull-based observer. Dropping it closes its dedicated connection; no worker task is spawned.
 /// After errors, call `next` again to retry. Intermediate versions can be skipped.
 pub struct SnapshotWatcher {
@@ -847,6 +994,108 @@ mod tests {
                 client.ack(&retry).await,
                 Err(SnapshotError::LeaseLost)
             ));
+        })
+        .await;
+    }
+
+    async fn with_redis_kv<F, Fut>(test: F)
+    where
+        F: FnOnce(RedisKvClient) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        use futures::FutureExt;
+        let url =
+            std::env::var("REDIS_TEST_URL").expect("set REDIS_TEST_URL to run ignored Redis tests");
+        let namespace = format!("sctys-kv-test-{:032x}", rand::random::<u128>());
+        let config = RedisSnapshotConfig::new(url, &namespace);
+        let client = RedisKvClient::connect(config).await.unwrap();
+        let outcome =
+            std::panic::AssertUnwindSafe(timeout(Duration::from_secs(20), test(client.clone())))
+                .catch_unwind()
+                .await;
+        let mut connection = client.inner.connection.clone();
+        let pattern = format!("kv:{}:*", encode(&namespace));
+        let mut cursor = 0u64;
+        loop {
+            let (next, keys): (u64, Vec<String>) = ::redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .query_async(&mut connection)
+                .await
+                .unwrap();
+            if !keys.is_empty() {
+                connection.del::<_, usize>(keys).await.unwrap();
+            }
+            cursor = next;
+            if cursor == 0 {
+                break;
+            }
+        }
+        match outcome {
+            Ok(result) => result.expect("Redis KV test timed out"),
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires REDIS_TEST_URL"]
+    async fn test_redis_kv_roundtrip_ttl_nx_and_delete() {
+        with_redis_kv(|client| async move {
+            assert_eq!(client.get_string("missing").await.unwrap(), None);
+            client.set_string("plain", "v").await.unwrap();
+            assert_eq!(
+                client.get_string("plain").await.unwrap(),
+                Some("v".to_owned())
+            );
+            client.set_string("plain", "second").await.unwrap();
+            assert_eq!(
+                client.get_string("plain").await.unwrap(),
+                Some("second".to_owned())
+            );
+            client
+                .set_string_with_ttl("ttl", "x", Duration::from_millis(120))
+                .await
+                .unwrap();
+            assert!(client.time_to_live("ttl").await.unwrap().is_some());
+            assert!(!client
+                .set_string_if_absent_ttl("plain", "nope", Duration::from_secs(10))
+                .await
+                .unwrap());
+            assert!(!client
+                .set_string_if_absent_ttl("ttl", "x", Duration::from_millis(120))
+                .await
+                .unwrap());
+            assert!(client
+                .set_string_if_absent_ttl("fresh", "x", Duration::from_secs(10))
+                .await
+                .unwrap());
+            assert_eq!(
+                client.get_string("fresh").await.unwrap(),
+                Some("x".to_owned())
+            );
+            client.delete("plain").await.unwrap();
+            assert_eq!(client.get_string("plain").await.unwrap(), None);
+            assert!(matches!(
+                client.set_string_with_ttl("k", "v", Duration::ZERO).await,
+                Err(SnapshotError::InvalidConfiguration(_))
+            ));
+            assert!(matches!(
+                client.kv_key(""),
+                Err(SnapshotError::InvalidConfiguration(_))
+            ));
+            assert_ne!(
+                RedisKvClient::connect(RedisSnapshotConfig::new(REDIS_PATH, "a"))
+                    .await
+                    .unwrap()
+                    .kv_key("k")
+                    .unwrap(),
+                RedisKvClient::connect(RedisSnapshotConfig::new(REDIS_PATH, "b"))
+                    .await
+                    .unwrap()
+                    .kv_key("k")
+                    .unwrap()
+            );
         })
         .await;
     }

@@ -4,8 +4,14 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const readline = require('readline');
 process.chdir(__dirname);
 
-// Apply all stealth evasions
-chromium.use(StealthPlugin());
+// Apply all stealth evasions. Disable the plugin's user-agent-override
+// evasion: it rewrites the UA to a Windows Chrome/xx.0.0.0 template that
+// contradicts the Linux host/JS platform and hides userAgentData, which
+// Cloudflare's managed challenge cross-checks. The real, unmodified
+// Chrome UA is already version-consistent with the engine.
+const stealthPlugin = StealthPlugin();
+stealthPlugin.enabledEvasions.delete('user-agent-override');
+chromium.use(stealthPlugin);
 
 // Global browser and context pool
 let browser = null;
@@ -347,7 +353,6 @@ async function createContext(proxy, headers, headlessMode = false) {
     await initBrowser(headlessMode);
 
     const contextConfig = {
-        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         viewport: { width: 1920, height: 1080 },
         locale: 'en-GB',
         timezoneId: 'Europe/London',
@@ -362,10 +367,11 @@ async function createContext(proxy, headers, headlessMode = false) {
             'Accept-Language': 'en-GB,en;q=0.9,en-US;q=0.8',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
             'Accept-Encoding': 'gzip, deflate, br',
-            'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Linux"',
-            // Do not override Sec-Fetch-*/Upgrade-Insecure-Requests: the browser
+            // Do not override User-Agent or sec-ch-ua* client hints: the pinned
+            // values drifted from the actual installed Chrome (auto-updated),
+            // and the UA <-> userAgentData mismatch makes Cloudflare's managed
+            // challenge reject the request (stuck on "Just a moment...").
+            // Same for Sec-Fetch-*/Upgrade-Insecure-Requests below: the browser
             // sets them for navigations and overriding them makes Cloudflare's
             // managed challenge reject the request (stuck on "Just a moment...").
         }
@@ -557,18 +563,27 @@ async function waitForCookie(contextId, cookieName, timeout = 60000) {
     };
 }
 
-// Set cookies for a context
-async function setCookies(contextId, cookies) {
+// Set cookies for a context. `url` supplies the scope when cookies are set
+// before the first navigation (the page still resides on about:blank).
+// Navigate to URL and return response data
+// Accepts either a Playwright-style array of {name, value} cookie objects
+// (as sent by the Rust client) or a plain { name: value } map.
+async function setCookies(contextId, cookies, url) {
     const ctx = contexts.get(contextId);
     if (!ctx) {
         throw new Error(`Context ${contextId} not found`);
     }
 
-    // Convert HashMap { name: value } to Playwright cookie format
-    const cookieArray = Object.entries(cookies).map(([name, value]) => ({
+    // Supplies the target host, required when the cookie is applied before
+    // the first navigation (the context page is still on about:blank).
+    const hostname = new URL(url || ctx.page.url()).hostname;
+    const cookiePairs = Array.isArray(cookies)
+        ? cookies.map(c => [c.name, c.value])
+        : Object.entries(cookies);
+    const cookieArray = cookiePairs.map(([name, value]) => ({
         name: name,
         value: value,
-        domain: new URL(ctx.page.url()).hostname,
+        domain: hostname,
         path: '/'
     }));
 
@@ -611,7 +626,7 @@ async function handleCommand(command) {
                 return { success: true, content };
 
             case 'set_cookies':
-                await setCookies(cmd.contextId, cmd.cookies);
+                await setCookies(cmd.contextId, cmd.cookies, cmd.url);
                 return { success: true };
 
             case 'close_context':
@@ -628,7 +643,10 @@ async function handleCommand(command) {
                 return { success: false, error: 'Unknown action' };
         }
     } catch (error) {
-        return { success: false, error: error.message };
+        // Mirror the message into `reason`: the Rust client only maps that
+        // field, so exceptions thrown outside the per-action switch were
+        // previously lost ("Failed to set cookies: None").
+        return { success: false, error: error.message, reason: error.message };
     }
 }
 

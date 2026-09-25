@@ -72,7 +72,14 @@ impl<'a> ScraperProxy<'a> {
         Ok(())
     }
 
+    /// Applies the freshly fetched proxy list, excluding proxies that have met the
+    /// block threshold from the still-running cycle window.
     fn apply_full_proxy_list(&mut self, proxy_list: Vec<ProxyResult>) -> Result<(), ProxyError> {
+        // Give proxies re-entering each refresh period a fresh chance. Reputation
+        // damage (e.g. interim 403s) is transient; keeping counts permanently
+        // drains the pool over long runs. A still-failing proxy simply re-earns
+        // its strikes and drops out again next cycle.
+        self.block_proxy_dict.clear();
         self.full_proxy_list = proxy_list
             .into_iter()
             .filter(|proxy| !self.is_proxy_blocked(proxy))
@@ -129,6 +136,18 @@ impl<'a> ScraperProxy<'a> {
         Ok(proxy)
     }
 
+    /// Refreshes the proxy list from the provider and leaves a usable
+    /// (non-empty) active pool. Pool-membership checks such as
+    /// [`Self::find_proxy`] must run after this; a scan against an
+    /// unrefreshed (empty) pool matches nothing and must not prune.
+    pub async fn refresh_pool_list(&mut self) -> Result<(), ProxyError> {
+        self.maybe_refresh_list().await?;
+        if self.active_proxy_list.is_empty() {
+            self.reset_active_list();
+        }
+        Ok(())
+    }
+
     /// Releases the proxy pinned by `generate_sticky_proxy`.
     pub fn clear_sticky_proxy(&mut self) {
         self.sticky_proxy = None;
@@ -142,6 +161,35 @@ impl<'a> ScraperProxy<'a> {
     /// Returns whether proxy selection is currently pinned.
     pub fn has_sticky_proxy(&self) -> bool {
         self.sticky_proxy.is_some()
+    }
+
+    /// Returns the member of the current pool (or a live sticky pin) matching
+    /// `proxy_address:port`, provided it exists and is not blocked. Lets the
+    /// clearance cache pick a proxy whose `cf_clearance` is already persisted.
+    pub fn find_proxy(&self, proxy_address: &str, port: u32) -> Option<ProxyResult> {
+        if let Some(proxy) = &self.sticky_proxy {
+            if proxy.proxy_address == proxy_address && proxy.port == port {
+                return Some(proxy.clone());
+            }
+        }
+        self.active_proxy_list
+            .iter()
+            .find(|proxy| {
+                proxy.proxy_address == proxy_address
+                    && proxy.port == port
+                    && !self.is_proxy_blocked(proxy)
+            })
+            .cloned()
+    }
+
+    /// Lists addresses of the proxies currently in the pool and not blocked,
+    /// used to prune persisted clearances whose proxy left the pool.
+    pub fn active_proxy_addresses(&self) -> Vec<(String, u32)> {
+        self.active_proxy_list
+            .iter()
+            .filter(|proxy| !self.is_proxy_blocked(proxy))
+            .map(|proxy| (proxy.proxy_address.clone(), proxy.port))
+            .collect()
     }
 
     fn is_proxy_blocked(&self, proxy: &ProxyResult) -> bool {
@@ -580,13 +628,33 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_full_proxy_list_returns_error_when_empty() {
+    fn test_apply_full_proxy_list_resets_blocks_then_filters() {
         let project_logger = build_test_logger();
         let mut scraper_proxy = build_test_scraper_proxy(&project_logger);
         let proxy = build_proxy("127.0.0.1");
         scraper_proxy.set_block_count(1);
         scraper_proxy.add_proxy_block_count(&proxy);
-        let result = scraper_proxy.apply_full_proxy_list(vec![proxy]);
+
+        // A refreshed list resets accumulated penalties, so a previously blocked
+        // proxy re-enters the pool (reputation damage is transient).
+        let result = scraper_proxy.apply_full_proxy_list(vec![proxy.clone()]);
+        assert!(result.is_ok());
+
+        // Strikes re-earned after the refresh block selection until the next one.
+        scraper_proxy.add_proxy_block_count(&proxy);
+        assert!(scraper_proxy.is_proxy_blocked(&proxy));
+
+        // ...but the next refresh clears them again.
+        let result = scraper_proxy.apply_full_proxy_list(vec![proxy.clone()]);
+        assert!(result.is_ok());
+        assert!(!scraper_proxy.is_proxy_blocked(&proxy));
+    }
+
+    #[test]
+    fn test_apply_full_proxy_list_returns_error_when_empty() {
+        let project_logger = build_test_logger();
+        let mut scraper_proxy = build_test_scraper_proxy(&project_logger);
+        let result = scraper_proxy.apply_full_proxy_list(vec![]);
         assert!(matches!(result, Err(ProxyError::NoValidProxy(_))));
     }
 
