@@ -45,7 +45,8 @@ impl<'a> ClickHouse<'a> {
             .with_url(Self::DB_URL)
             .with_user(Self::USER_NAME)
             .with_password(&self.password)
-            .with_database(database);
+            .with_database(database)
+            .with_option("network_compression_method", "LZ4");
         let debug_str = format!("Connected to Clickhouse database {database}");
         self.project_logger.log_debug(&debug_str);
         client
