@@ -475,11 +475,154 @@ mod tests {
         let verify_url = "https://www.fotmob.com/api/turnstile/verify";
         let client = reqwest::Client::new();
         let res = client.post(verify_url)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .header("Origin", "https://www.fotmob.com")
-        .header("Referer", "https://www.fotmob.com/")
-        .json(&serde_json::json!({"token": token})).send().await.unwrap();
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .header("Origin", "https://www.fotmob.com")
+            .header("Referer", "https://www.fotmob.com/")
+            .json(&serde_json::json!({"token": token})).send().await.unwrap();
         let header = res.headers();
         println!("Header: {:?}", header);
+    }
+
+    // Probe: does CapSolver's AntiTurnstileTaskProxyLess solve the
+    // Turnstile widget that scoremer now embeds on its "Just a moment..."
+    // challenge page? Sitekey `0x4AAAAAAADnPIDROrmt1Wwj` was extracted from
+    // the orchestrator script on www.scoremer.com/basketball.
+    #[tokio::test]
+    async fn test_solve_scoremer_turnstile() {
+        let logger_name = "test_cap_solver";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_proxy");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        project_logger.set_logger(LevelFilter::Debug);
+        let secret = Secret::new(&project_logger).await;
+        let cap_solver = CapSolver::new(&project_logger, &secret).await.unwrap();
+        let website_url = "https://www.scoremer.com/basketball";
+        let website_id = "0x4AAAAAAADnPIDROrmt1Wwj";
+        match cap_solver.solve_turnstile(website_url, website_id).await {
+            Ok(token) => println!("scoremer token ({} chars): {}", token.len(), token),
+            Err(e) => println!("scoremer solve failed: {e}"),
+        }
+    }
+
+    // Empirical TLS-vs-cookie-validity probe for scoremer. CapSolver's
+    // AntiCloudflareTask returns a cf_clearance but wreq Chrome135
+    // emulation can't replay it. Hypothesis: the cookie is fine and the
+    // replay fails because of TLS fingerprint mismatch. Test it directly
+    // by replaying the cookie with reqwest (no TLS fingerprinting) and
+    // checking the status code.
+    #[tokio::test]
+    async fn test_scoremer_replay_cookie_via_reqwest() {
+        use crate::netdata::capsolver::CapSolver;
+        use crate::netdata::proxy::ScraperProxy;
+
+        let logger_name = "test_cap_solver";
+        let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
+            .join("Log")
+            .join("log_sctys_proxy");
+        let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
+        project_logger.set_logger(LevelFilter::Debug);
+        let secret = Secret::new(&project_logger).await;
+        let cap_solver = CapSolver::new(&project_logger, &secret).await.unwrap();
+        let mut scraper_proxy = ScraperProxy::new(&project_logger, &secret).await.unwrap();
+        let proxy = scraper_proxy.generate_proxy().await.unwrap();
+        let proxy_address = proxy.get_cap_solver_proxy();
+        let proxy_http = proxy.get_http_address();
+        println!("using proxy {proxy_address}");
+
+        // Initial GET via wreq with the proxy to capture the challenge
+        // page (the html parameter solve_cloudflare expects).
+        let url = "https://www.scoremer.com/basketball";
+        let wreq_client = wreq::Client::builder()
+            .emulation(wreq_util::Emulation::Chrome135)
+            .build()
+            .unwrap();
+        let initial = wreq_client
+            .get(url)
+            .proxy(wreq::Proxy::all(proxy_http.clone()).unwrap())
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+            .unwrap();
+        let initial_status = initial.status().as_u16();
+        let initial_html = initial.text().await.unwrap();
+        println!(
+            "initial: status {} len {} markers jm={} dataCon={}",
+            initial_status,
+            initial_html.len(),
+            initial_html.to_lowercase().contains("just a moment"),
+            initial_html.contains("dataCon"),
+        );
+
+        // If the initial request was already 200, the proxy IP is
+        // already cleared and there's no need to solve. Skip.
+        if initial_status == 200 {
+            println!("proxy already cleared, no solve needed");
+            return;
+        }
+
+        // Solve via CapSolver using the captured page. CapSolver rejects an empty
+        // userAgent when html is supplied, so pass Chrome135 (matching
+        // wreq's emulation).
+        const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+        let solution = match cap_solver
+            .solve_cloudflare(url, &proxy_address, UA, &initial_html)
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                println!("solve_cloudflare failed: {e}");
+                return;
+            }
+        };
+        println!(
+            "solution: ua={:?} cookies={:?} headers={:?}",
+            solution.user_agent(),
+            solution.cookies(),
+            solution.headers(),
+        );
+
+        // Replay via plain reqwest (no wreq TLS spoofing) using the
+        // SAME proxy IP the cookie was minted for. If this returns 200,
+        // the cookie is valid and the failure in CloudflarePool is
+        // purely TLS fingerprint. If 403, the cookie itself is wrong.
+        let reqwest_proxy = reqwest::Proxy::all(proxy_http.clone()).unwrap();
+        let replay_client = reqwest::Client::builder()
+            .proxy(reqwest_proxy)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap();
+        let cookie_header: String = solution
+            .cookies()
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let replay_status = replay_client
+            .get(url)
+            .header(reqwest::header::USER_AGENT, solution.user_agent())
+            .header(reqwest::header::COOKIE, cookie_header.clone())
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16();
+        println!("reqwest replay: status {replay_status}");
+
+        // As a sanity check, replay via wreq Chrome135 through the
+        // same proxy too. If wreq rejects but reqwest accepts, the
+        // failure is TLS fingerprint. If both reject, the cookie is
+        // bad. If both accept, the issue is somewhere else (e.g.
+        // stuck cookies across proxies in the pool).
+        let wreq_replay = wreq_client
+            .get(url)
+            .proxy(wreq::Proxy::all(proxy_http).unwrap())
+            .header(wreq::header::USER_AGENT, solution.user_agent())
+            .header(wreq::header::COOKIE, cookie_header)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+            .unwrap();
+        println!("wreq replay: status {}", wreq_replay.status().as_u16());
     }
 }

@@ -580,6 +580,16 @@ impl RedisKvClient {
         Ok(())
     }
 
+    /// Resets the remaining TTL of an existing key without rewriting it.
+    pub async fn expire(&self, key: &str, ttl: Duration) -> SnapshotResult<()> {
+        self.validate_duration(ttl)?;
+        let mut connection = self.inner.connection.clone();
+        let _: () = connection
+            .pexpire(self.kv_key(key)?, ttl.as_millis() as i64)
+            .await?;
+        Ok(())
+    }
+
     /// Lists keys matching a glob pattern scoped to this client's namespace.
     /// The pattern is spliced in unencoded after the encoded namespace so
     /// wildcard characters reach Redis; the stored key part itself remains

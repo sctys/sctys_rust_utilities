@@ -271,6 +271,19 @@ impl ProxyResult {
         self.valid
     }
 
+    /// Clones this proxy's credentials onto another address:port of the same
+    /// plan (plan auth is uniform across entries). Used to reach provider
+    /// addresses that dropped out of the refreshed list but still authenticate.
+    pub fn with_address_port(&self, proxy_address: String, port: u32) -> Self {
+        Self {
+            username: self.username.clone(),
+            password: self.password.clone(),
+            proxy_address,
+            port,
+            valid: self.valid,
+        }
+    }
+
     pub fn get_http_address(&self) -> String {
         Self::HTTP_ADDRESS
             .replace("{user_name}", &self.username)

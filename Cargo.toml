@@ -45,3 +45,9 @@ tokio = {version = "1", features = ["full"]}
 toml = "0.5"
 tqdm = "0.4"
 walkdir = "2.4"
+
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 0

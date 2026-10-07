@@ -184,13 +184,36 @@ pub struct CloudflarePool<'a> {
     max_solves_per_request: u8,
     max_bootstrap_attempts: u8,
     solve_count: u32,
+    top_up_failures: u32,
+    last_top_up_at: Option<Instant>,
+    /// Proxies whose minted clearance was rejected on the retry. A rejected
+    /// mint is paid once per proxy per run: re-solving the same IP in a loop
+    /// would keep paying CapSolver for tokens the site will not accept.
+    mint_rejected_proxies: HashMap<String, ()>,
     kv_config: Option<RedisSnapshotConfig>,
     kv: Option<RedisKvClient>,
     persistence_ttl: Duration,
 }
 
+/// Marks a proxy whose freshly-minted clearance was rejected; the proxy is
+/// never minted (or re-solved) again during this pool's lifetime.
+fn blacklist_mint_rejected_proxy(
+    mint_rejected_proxies: &mut HashMap<String, ()>,
+    proxy: &ProxyResult,
+) {
+    let key = format!("{}:{}", proxy.proxy_address, proxy.port);
+    mint_rejected_proxies.entry(key).or_insert(());
+}
+
+fn is_mint_rejected(mint_rejected_proxies: &HashMap<String, ()>, proxy: &ProxyResult) -> bool {
+    mint_rejected_proxies.contains_key(&format!("{}:{}", proxy.proxy_address, proxy.port))
+}
+
 impl<'a> CloudflarePool<'a> {
-    const CHROME135_USER_AGENT: &'static str =
+    // Per CapSolver's guide, AntiCloudflareTask accepts a custom user-agent and
+    // it must match the one used to request the target page, so this stays in
+    // lockstep with the proxy client's Chrome135 emulation.
+    const SOLVER_USER_AGENT: &'static str =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) \
          Chrome/135.0.0.0 Safari/537.36";
     const DEFAULT_MAX_SESSIONS: usize = 12;
@@ -199,6 +222,10 @@ impl<'a> CloudflarePool<'a> {
     const DEFAULT_MAX_BOOTSTRAP_ATTEMPTS: u8 = 8;
     const MAX_SESSION_FAILURES: u8 = 3;
     const TOP_UP_PROBES: u8 = 4;
+    const TOP_UP_SOLVES_PER_CYCLE: u8 = 2;
+    const TOP_UP_MIN_INTERVAL: Duration = Duration::from_secs(60);
+    const MAX_TOP_UP_FAILURES: u32 = 3;
+    const TOP_UP_BACKOFF: Duration = Duration::from_secs(10 * 60);
     const CLEARANCE_KEY_PREFIX: &'static str = "cf_clearance";
     const SOLVE_LEASE_KEY_PREFIX: &'static str = "cf_solve_lease";
     const DEFAULT_PERSISTENCE_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
@@ -243,6 +270,10 @@ impl<'a> CloudflarePool<'a> {
     /// After a successful serve, add more clean (200, no-challenge) proxies to the pool so
     /// consecutive requests rotate across IPs instead of reusing one. Capped per call and
     /// overall by `max_sessions`; only proxies that pass without a challenge are added.
+    /// On zones that challenge every fresh IP no cycle ever adds a session, so probing
+    /// backs off: after `MAX_TOP_UP_FAILURES` consecutive zero-growth cycles it pauses
+    /// for `TOP_UP_BACKOFF` and then retries a single cycle. Any cycle that adds a
+    /// session resets the backoff.
     async fn top_up(
         &mut self,
         url: &str,
@@ -254,11 +285,29 @@ impl<'a> CloudflarePool<'a> {
     ) {
         let site_host = Self::site_host(url).unwrap_or("unknown");
         let kv = self.kv.clone();
+        if !Self::top_up_gate(
+            self.sessions.len(),
+            self.max_sessions,
+            self.top_up_failures,
+            self.last_top_up_at,
+            Instant::now(),
+        ) {
+            return;
+        }
         let Self {
+            cap_solver,
             sessions,
             max_sessions,
+            top_up_failures,
+            last_top_up_at,
+            solve_count,
+            persistence_ttl,
+            mint_rejected_proxies,
             ..
         } = self;
+        *last_top_up_at = Some(Instant::now());
+        let mut added = 0usize;
+        let mut solves = 0u8;
         let existing_ips: Vec<String> = sessions
             .iter()
             .map(|s| s.proxy.proxy_address.clone())
@@ -282,9 +331,10 @@ impl<'a> CloudflarePool<'a> {
             if existing_ips.contains(&proxy.proxy_address) {
                 continue;
             }
-            let mut session = CfSession::new(proxy.clone(), Self::CHROME135_USER_AGENT);
+            let mut session = CfSession::new(proxy.clone(), Self::SOLVER_USER_AGENT);
             if Self::hydrate_clearance(kv.as_ref(), site_host, &proxy, &mut session, logger).await {
                 sessions.push(session);
+                added += 1;
                 continue;
             }
             let options = session.request_options(request_options);
@@ -300,15 +350,163 @@ impl<'a> CloudflarePool<'a> {
             .await;
             match response {
                 Ok(response) => match classify_cf_block(response.status_code, &response.content) {
-                    None => sessions.push(session),
+                    None => {
+                        sessions.push(session);
+                        added += 1;
+                    }
                     Some(CfBlock::HardBlock) => {
                         Self::evict_clearance(kv.as_ref(), site_host, &proxy, logger).await;
                         scraper_proxy.add_proxy_block_count(&proxy);
                     }
-                    Some(CfBlock::Challenge) => {}
+                    // On zones that challenge every fresh IP, a top-up cycle
+                    // that merely skips challenged probes can never rebuild the
+                    // pool (the only solver path was the all-sessions-failed
+                    // bootstrap). Solve instead, budgeted per cycle so healthy
+                    // operation does not drain CapSolver credits.
+                    Some(CfBlock::Challenge) => {
+                        if is_mint_rejected(mint_rejected_proxies, &proxy) {
+                            continue;
+                        }
+                        if solves >= Self::TOP_UP_SOLVES_PER_CYCLE {
+                            continue;
+                        }
+                        if !Self::try_acquire_solve_lease(kv.as_ref(), site_host, &proxy, logger)
+                            .await
+                        {
+                            continue;
+                        }
+                        let solve_result = cap_solver
+                            .solve_cloudflare(
+                                url,
+                                &proxy.get_cap_solver_proxy(),
+                                &session.user_agent,
+                                &response.content,
+                            )
+                            .await;
+                        Self::release_solve_lease(kv.as_ref(), site_host, &proxy, logger).await;
+                        solves += 1;
+                        match solve_result {
+                            Ok(solution) => {
+                                *solve_count += 1;
+                                session.apply_solution(&solution);
+                                Self::persist_clearance(
+                                    kv.as_ref(),
+                                    *persistence_ttl,
+                                    site_host,
+                                    &proxy,
+                                    &session,
+                                    logger,
+                                )
+                                .await;
+                                logger.log_debug(&format!(
+                                    "Cloudflare pool solved challenge during top-up for proxy {}:{} ({} solves total)",
+                                    proxy.proxy_address, proxy.port, *solve_count
+                                ));
+                                let options = session.request_options(request_options);
+                                let retry = Self::send_with_session(
+                                    url,
+                                    &options,
+                                    &proxy,
+                                    client,
+                                    scraper_proxy,
+                                    source_scraper,
+                                    logger,
+                                )
+                                .await;
+                                match retry {
+                                    Ok(retry) => {
+                                        if classify_cf_block(retry.status_code, &retry.content)
+                                            .is_none()
+                                        {
+                                            logger.log_debug(&format!(
+                                                "Cloudflare pool top-up added session for proxy {}:{}, status {}",
+                                                proxy.proxy_address, proxy.port, retry.status_code
+                                            ));
+                                            sessions.push(session);
+                                            added += 1;
+                                        } else {
+                                            let warn_str = format!(
+                                                "Cloudflare pool top-up minted clearance for proxy {}:{} was rejected on retry (status {}), blacklisting the proxy",
+                                                proxy.proxy_address, proxy.port, retry.status_code
+                                            );
+                                            logger.log_warn(&warn_str);
+                                            blacklist_mint_rejected_proxy(
+                                                mint_rejected_proxies,
+                                                &proxy,
+                                            );
+                                            Self::evict_clearance(
+                                                kv.as_ref(),
+                                                site_host,
+                                                &proxy,
+                                                logger,
+                                            )
+                                            .await;
+                                            scraper_proxy.add_proxy_block_count(&proxy);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let warn_str = format!(
+                                            "Cloudflare pool top-up request failed after clearance: {e}"
+                                        );
+                                        logger.log_warn(&warn_str);
+                                        Self::evict_clearance(
+                                            kv.as_ref(),
+                                            site_host,
+                                            &proxy,
+                                            logger,
+                                        )
+                                        .await;
+                                        scraper_proxy.add_proxy_block_count(&proxy);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let warn_str = format!(
+                                    "Cloudflare pool failed to solve challenge during top-up for proxy {}:{}, skipping. {e}",
+                                    proxy.proxy_address, proxy.port
+                                );
+                                logger.log_warn(&warn_str);
+                                Self::evict_clearance(kv.as_ref(), site_host, &proxy, logger).await;
+                                scraper_proxy.add_proxy_block_count(&proxy);
+                            }
+                        }
+                    }
                 },
                 Err(_) => break,
             }
+        }
+        if added > 0 {
+            *top_up_failures = 0;
+        } else {
+            *top_up_failures = top_up_failures.saturating_add(1);
+        }
+    }
+
+    /// Adaptive gate for top-up probing. Skips when the pool is full, and while
+    /// `MAX_TOP_UP_FAILURES` consecutive zero-growth cycles have armed the backoff
+    /// and the cooldown since the last cycle has not elapsed. `now` is injected
+    /// for testability.
+    fn top_up_gate(
+        session_count: usize,
+        max_sessions: usize,
+        top_up_failures: u32,
+        last_top_up_at: Option<Instant>,
+        now: Instant,
+    ) -> bool {
+        if session_count >= max_sessions {
+            return false;
+        }
+        // Rate-limit the cycles themselves: short interval normally, long
+        // backoff once repeated zero-growth cycles suggest the probes cannot
+        // onboard sessions.
+        let min_interval = if top_up_failures >= Self::MAX_TOP_UP_FAILURES {
+            Self::TOP_UP_BACKOFF
+        } else {
+            Self::TOP_UP_MIN_INTERVAL
+        };
+        match last_top_up_at {
+            Some(last) => now.duration_since(last) >= min_interval,
+            None => true,
         }
     }
 
@@ -322,6 +520,9 @@ impl<'a> CloudflarePool<'a> {
             max_solves_per_request: Self::DEFAULT_MAX_SOLVES_PER_REQUEST,
             max_bootstrap_attempts: Self::DEFAULT_MAX_BOOTSTRAP_ATTEMPTS,
             solve_count: 0,
+            top_up_failures: 0,
+            last_top_up_at: None,
+            mint_rejected_proxies: HashMap::new(),
             kv_config: None,
             kv: None,
             persistence_ttl: Self::DEFAULT_PERSISTENCE_TTL,
@@ -430,6 +631,7 @@ impl<'a> CloudflarePool<'a> {
             max_bootstrap_attempts,
             solve_count,
             persistence_ttl,
+            mint_rejected_proxies,
             ..
         } = self;
         let mut solves = 0u8;
@@ -447,7 +649,7 @@ impl<'a> CloudflarePool<'a> {
                 session.cleared_at = None;
                 session.cookie_header.clear();
                 session.extra_headers.clear();
-                session.user_agent = Self::CHROME135_USER_AGENT.to_string();
+                session.user_agent = Self::SOLVER_USER_AGENT.to_string();
             }
             let options = session.request_options(request_options);
             let response = Self::send_with_session(
@@ -477,12 +679,23 @@ impl<'a> CloudflarePool<'a> {
                         return Ok(response);
                     }
                     Some(CfBlock::Challenge) => {
+                        let proxy = session.proxy.clone();
+                        if is_mint_rejected(mint_rejected_proxies, &proxy) {
+                            // This proxy's minted clearance was already rejected
+                            // once; it cannot be repaired by re-solving.
+                            logger.log_warn(&format!(
+                                "Cloudflare pool session {}:{} challenged but proxy is mint-blacklisted, evicting",
+                                proxy.proxy_address, proxy.port
+                            ));
+                            Self::evict_clearance(kv.as_ref(), site_host, &proxy, logger).await;
+                            sessions.remove(index);
+                            continue;
+                        }
                         if solves >= *max_solves_per_request {
                             *cursor = (index + 1) % sessions.len().max(1);
                             last_response = Some(response);
                             continue;
                         }
-                        let proxy = session.proxy.clone();
                         if !Self::try_acquire_solve_lease(kv.as_ref(), site_host, &proxy, logger)
                             .await
                         {
@@ -597,6 +810,10 @@ impl<'a> CloudflarePool<'a> {
                                             proxy.proxy_address, proxy.port
                                         );
                                         logger.log_warn(&warn_str);
+                                        blacklist_mint_rejected_proxy(
+                                            mint_rejected_proxies,
+                                            &proxy,
+                                        );
                                         Self::evict_clearance(
                                             kv.as_ref(),
                                             site_host,
@@ -680,7 +897,7 @@ impl<'a> CloudflarePool<'a> {
                 Some(proxy) => proxy,
                 None => scraper_proxy.generate_proxy().await?,
             };
-            let mut session = CfSession::new(proxy.clone(), Self::CHROME135_USER_AGENT);
+            let mut session = CfSession::new(proxy.clone(), Self::SOLVER_USER_AGENT);
             if Self::hydrate_clearance(kv.as_ref(), site_host, &proxy, &mut session, logger).await {
                 let options = session.request_options(request_options);
                 let response = Self::send_with_session(
@@ -738,6 +955,9 @@ impl<'a> CloudflarePool<'a> {
                         return Ok(response);
                     }
                     Some(CfBlock::Challenge) => {
+                        if is_mint_rejected(mint_rejected_proxies, &proxy) {
+                            continue;
+                        }
                         if solves >= *max_solves_per_request {
                             last_response = Some(response);
                             continue;
@@ -793,6 +1013,10 @@ impl<'a> CloudflarePool<'a> {
                                         {
                                             sessions.push(session);
                                         } else {
+                                            blacklist_mint_rejected_proxy(
+                                                mint_rejected_proxies,
+                                                &proxy,
+                                            );
                                             Self::evict_clearance(
                                                 kv.as_ref(),
                                                 site_host,
@@ -1122,6 +1346,40 @@ mod tests {
             serde_json::from_str::<PersistedClearance>(&json).unwrap(),
             record
         );
+    }
+
+    #[test]
+    fn test_top_up_gate_backoff() {
+        let now = Instant::now();
+        let later = now + Pool::TOP_UP_BACKOFF;
+        // Full pool never probes.
+        assert!(!Pool::top_up_gate(12, 12, 0, None, now));
+        // Healthy pool probes.
+        assert!(Pool::top_up_gate(1, 12, 0, None, now));
+        // Backoff armed, cooldown not elapsed: skip.
+        assert!(!Pool::top_up_gate(
+            1,
+            12,
+            Pool::MAX_TOP_UP_FAILURES,
+            Some(now),
+            now
+        ));
+        // Backoff armed, cooldown elapsed: one retry cycle.
+        assert!(Pool::top_up_gate(
+            1,
+            12,
+            Pool::MAX_TOP_UP_FAILURES,
+            Some(now),
+            later
+        ));
+        // Backoff armed with no recorded cycle time: allow.
+        assert!(Pool::top_up_gate(
+            1,
+            12,
+            Pool::MAX_TOP_UP_FAILURES,
+            None,
+            now
+        ));
     }
 
     #[test]

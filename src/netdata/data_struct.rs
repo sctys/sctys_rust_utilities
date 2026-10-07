@@ -110,6 +110,11 @@ pub struct RequestOptions {
     pub timeout: Duration,
     pub headers: Option<HeaderMap>,
     pub proxy_block_count: u8,
+    /// Follow HTTP 3xx redirects instead of surfacing them to the response
+    /// checker. Opt-in because cross-host redirects could silently re-target
+    /// a request; sources whose endpoints canonicalize URLs (e.g. slug
+    /// normalization 301s) enable it.
+    pub follow_redirects: bool,
 }
 
 impl Default for RequestOptions {
@@ -119,6 +124,7 @@ impl Default for RequestOptions {
             timeout: RequestOptions::DEFAULT_TIMEOUT,
             headers: None,
             proxy_block_count: 0,
+            follow_redirects: false,
         }
     }
 }

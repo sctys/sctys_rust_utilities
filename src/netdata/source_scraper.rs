@@ -134,8 +134,16 @@ impl<'a> SourceScraper<'a> {
             RquestBrowser::Chrome120 => Emulation::Chrome120,
             RquestBrowser::Chrome135 => Emulation::Chrome135,
         };
+        // wreq's implicit default does not deterministically follow redirects;
+        // make the behavior explicit per source via follow_redirects.
+        let redirect_policy = if request_options.follow_redirects {
+            wreq::redirect::Policy::limited(5)
+        } else {
+            wreq::redirect::Policy::none()
+        };
         let rquest_client = wreq::Client::builder()
             .emulation(emulation)
+            .redirect(redirect_policy)
             .connect_timeout(request_options.connect_timeout)
             .timeout(request_options.timeout)
             .read_timeout(read_timeout)
@@ -1476,14 +1484,14 @@ async fn navigate_with_clearance_persistence(
 ) -> Result<Response, ScraperError> {
     let kv = playwright_clearance_kv().await;
     let storage_key = url_host(url).map(|site_host| playwright_clearance_key(&site_host, proxy));
-    let mut hydrated = false;
+    let mut hydrated_clearance: Option<String> = None;
     if let (Some(kv), Some(storage_key)) = (kv, storage_key.as_deref()) {
         match kv.get_string(storage_key).await {
             Ok(Some(record_json)) => {
                 match serde_json::from_str::<PersistedJsClearance>(&record_json) {
                     Ok(record) => {
                         let mut cookies = HashMap::new();
-                        cookies.insert(record.cookie_name.clone(), record.cookie_value);
+                        cookies.insert(record.cookie_name.clone(), record.cookie_value.clone());
                         match playwright.set_cookies_for_url(context_id, cookies, url) {
                             Ok(()) => {
                                 let debug_log = format!(
@@ -1491,7 +1499,7 @@ async fn navigate_with_clearance_persistence(
                                     record.cookie_name
                                 );
                                 source_scraper.logger.log_debug(&debug_log);
-                                hydrated = true;
+                                hydrated_clearance = Some(record.cookie_value);
                             }
                             Err(e) => {
                                 let warn_str =
@@ -1524,45 +1532,74 @@ async fn navigate_with_clearance_persistence(
         Err(e) => Err(e),
         Ok(response) => {
             if let (Some(kv), Some(storage_key)) = (kv, storage_key.as_deref()) {
-                if response.cookies.contains_key("cf_clearance") {
-                    if let Some(site_host) = url_host(url) {
-                        let proxy_key = proxy
-                            .map(|proxy| format!("{}:{}", proxy.proxy_address, proxy.port))
-                            .unwrap_or_else(|| "direct:0".to_string());
-                        let record = PersistedJsClearance {
-                            site_host,
-                            proxy_key,
-                            cookie_name: "cf_clearance".to_string(),
-                            cookie_value: response.cookies["cf_clearance"].clone(),
-                            persisted_at: Utc::now().timestamp(),
-                        };
-                        match serde_json::to_string(&record) {
-                            Ok(record_json) => {
-                                if let Err(e) = kv
-                                    .set_string_with_ttl(
-                                        storage_key,
-                                        &record_json,
-                                        clearance_persistence_ttl,
-                                    )
-                                    .await
-                                {
+                // A cf_clearance present in the response cookies is only a
+                // fresh solve when it differs from the hydrated value: when
+                // the challenge re-issues, the browser keeps carrying the
+                // injected (stale) cookie, so an unchanged value on a failed
+                // response means the record no longer validates and must be
+                // evicted rather than persisted again.
+                let response_clearance = response
+                    .cookies
+                    .get("cf_clearance")
+                    .filter(|value| Some(value.as_str()) != hydrated_clearance.as_deref());
+                match (response_clearance, hydrated_clearance.is_some()) {
+                    (Some(clearance_value), _) => {
+                        if let Some(site_host) = url_host(url) {
+                            let proxy_key = proxy
+                                .map(|proxy| format!("{}:{}", proxy.proxy_address, proxy.port))
+                                .unwrap_or_else(|| "direct:0".to_string());
+                            let record = PersistedJsClearance {
+                                site_host: site_host.clone(),
+                                proxy_key: proxy_key.clone(),
+                                cookie_name: "cf_clearance".to_string(),
+                                cookie_value: clearance_value.clone(),
+                                persisted_at: Utc::now().timestamp(),
+                            };
+                            match serde_json::to_string(&record) {
+                                Ok(record_json) => {
+                                    if let Err(e) = kv
+                                        .set_string_with_ttl(
+                                            storage_key,
+                                            &record_json,
+                                            clearance_persistence_ttl,
+                                        )
+                                        .await
+                                    {
+                                        let warn_str = format!(
+                                            "Unable to persist cf_clearance for {url}. {e}"
+                                        );
+                                        source_scraper.logger.log_warn(&warn_str);
+                                    }
+                                }
+                                Err(e) => {
                                     let warn_str =
-                                        format!("Unable to persist cf_clearance for {url}. {e}");
+                                        format!("Unable to serialize persisted clearance. {e}");
                                     source_scraper.logger.log_warn(&warn_str);
                                 }
                             }
-                            Err(e) => {
-                                let warn_str =
-                                    format!("Unable to serialize persisted clearance. {e}");
-                                source_scraper.logger.log_warn(&warn_str);
-                            }
                         }
                     }
-                } else if hydrated && response.status_code >= 400 {
-                    if let Err(e) = kv.delete(storage_key).await {
-                        let warn_str = format!("Unable to evict stale cf_clearance for {url}. {e}");
-                        source_scraper.logger.log_warn(&warn_str);
+                    (None, true) if response.status_code >= 400 => {
+                        let debug_log = format!("Evicting stale hydrated cf_clearance for {url}");
+                        source_scraper.logger.log_debug(&debug_log);
+                        if let Err(e) = kv.delete(storage_key).await {
+                            let warn_str =
+                                format!("Unable to evict stale cf_clearance for {url}. {e}");
+                            source_scraper.logger.log_warn(&warn_str);
+                        }
                     }
+                    (None, true) => {
+                        // Same value on a successful response: the hydrated
+                        // clearance is still valid, refresh its TTL.
+                        let debug_log = format!("Refreshed ttl for hydrated cf_clearance at {url}");
+                        source_scraper.logger.log_debug(&debug_log);
+                        if let Err(e) = kv.expire(storage_key, clearance_persistence_ttl).await {
+                            let warn_str =
+                                format!("Unable to refresh cf_clearance ttl for {url}. {e}");
+                            source_scraper.logger.log_warn(&warn_str);
+                        }
+                    }
+                    (None, false) => {}
                 }
             }
             Ok(response)
