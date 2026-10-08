@@ -241,7 +241,7 @@ impl Response {
         body_timeout: Duration,
     ) -> Result<Self, ScraperError> {
         let status_code = response.status().as_u16();
-        let url = response.url().to_string();
+        let url = response.uri().to_string();
         let ok = response.status().is_success();
         let reason = response
             .status()

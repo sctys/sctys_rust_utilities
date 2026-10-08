@@ -431,9 +431,8 @@ impl ApiGateway {
             let endpoint = endpoints.choose(&mut rng).unwrap();
 
             // Replace URL with our endpoint
-            let url = request.url().clone();
-            let url_str = url.as_str();
-            let protocol_split: Vec<&str> = url_str.split("://").collect();
+            let uri_str = request.uri().to_string();
+            let protocol_split: Vec<&str> = uri_str.split("://").collect();
 
             if protocol_split.len() != 2 {
                 return Err(Box::new(std::io::Error::other("Invalid URL format")));
@@ -446,8 +445,9 @@ impl ApiGateway {
                 .join("/");
             let new_url = format!("https://{}/ProxyStage/{}", endpoint, site_path);
 
-            *request.url_mut() = reqwest::Url::parse(&new_url)
-                .map_err(|e| std::io::Error::other(format!("Failed to parse URL: {}", e)))?;
+            *request.uri_mut() = new_url
+                .parse()
+                .map_err(|e| std::io::Error::other(format!("Failed to parse URI: {}", e)))?;
 
             // Replace host with endpoint host
             let headers = request.headers_mut();

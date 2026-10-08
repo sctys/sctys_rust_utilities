@@ -2,6 +2,7 @@
 name = "sctys_rust_utilities"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.98"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -30,8 +31,8 @@ mongodb = "3.2"
 rand = {version = "0.8.5", features = ["std"]}
 redis = { version = "1", features = ["tokio-comp", "connection-manager", "script"] }
 reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots", "gzip", "cookies"]}
-wreq = {version ="5", features = ["cookies", "json"]}
-wreq-util = "2"
+wreq = {version = "0.16", features = ["cookies", "json"]}
+wreq-util = "0.2"
 scraper = "0.14.0"
 sea-query = { version = "0.32", features = ["thread-safe"] }
 serde = "1.0.193"
