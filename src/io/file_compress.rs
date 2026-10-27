@@ -20,7 +20,7 @@ pub struct ParallelBz2Writer {
 }
 
 impl ParallelBz2Writer {
-    fn new(output_path: &Path, worker_count: usize) -> Result<Self> {
+    pub(crate) fn new(output_path: &Path, worker_count: usize) -> Result<Self> {
         if worker_count == 0 {
             return Err(Error::new(
                 ErrorKind::InvalidInput,

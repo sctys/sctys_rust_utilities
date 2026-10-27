@@ -3,7 +3,18 @@ pub mod logging;
 pub mod messenger;
 pub mod misc;
 pub mod netdata;
+pub mod pipeline;
+pub mod project;
 pub mod secret;
+
+#[doc(hidden)]
+pub mod __record_dependencies {
+    pub use chrono;
+    pub use clickhouse;
+    pub use mongodb;
+    pub use serde;
+    pub use strum;
+}
 
 pub use io::aws_s3;
 pub use io::click_house;

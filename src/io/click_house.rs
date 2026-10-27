@@ -375,6 +375,50 @@ impl<'a> ClickHouse<'a> {
         })
     }
 
+    fn parquet_export_command(
+        &self,
+        database: &str,
+        table_name: &str,
+        filter: Option<&str>,
+        folder_path: &Path,
+        file_name: &str,
+    ) -> Command {
+        let filter = filter.map_or_else(String::new, |filter| format!(" WHERE {filter}"));
+        let mut command = Command::new(Self::CLICKHOUSE_LOCAL);
+        command.arg("--query").arg(format!("SELECT * FROM remote('{}', '{database}.{table_name}', '{}', '{}'){filter} INTO OUTFILE '{}/{file_name}' FORMAT Parquet", Self::LOCAL_HOST_PORT, Self::USER_NAME, self.password, folder_path.display()));
+        command
+    }
+
+    fn check_parquet_export(
+        &self,
+        status: std::io::Result<std::process::ExitStatus>,
+        database: &str,
+        table_name: &str,
+        folder_path: &Path,
+        file_name: &str,
+    ) -> Result<()> {
+        let status = status.map_err(|error| {
+            self.project_logger.log_error(
+                &format!("Unable to execute command. {error}").replace(&self.password, "***"),
+            );
+            error
+        })?;
+        if status.success() {
+            self.project_logger.log_debug(&format!(
+                "Exported table {table_name} in database {database} to {}/{file_name}",
+                folder_path.display()
+            ));
+            Ok(())
+        } else {
+            let message = format!(
+                "Unable to export table {table_name} in database {database} to {}/{file_name}",
+                folder_path.display()
+            );
+            self.project_logger.log_error(&message);
+            Err(clickhouse::error::Error::Custom(message))
+        }
+    }
+
     pub fn export_table_to_parquet(
         &self,
         database: &str,
@@ -382,36 +426,10 @@ impl<'a> ClickHouse<'a> {
         folder_path: &Path,
         file_name: &str,
     ) -> Result<()> {
-        let status = Command::new(Self::CLICKHOUSE_LOCAL)
-            .arg("--query")
-            .arg(format!("SELECT * FROM remote('{}', '{database}.{table_name}', '{}', '{}') INTO OUTFILE '{}/{file_name}' FORMAT Parquet",
-                Self::LOCAL_HOST_PORT,
-                Self::USER_NAME,
-                self.password,
-                folder_path.display(),
-            ))
-            .status()
-            .map_err(|e| {
-                let error_str = format!("Unable to execute command. {e}");
-                let error_str_redacted = error_str.replace(&self.password, "***");
-                self.project_logger.log_error(&error_str_redacted);
-                e
-            })?;
-        if status.success() {
-            let debug_str = format!(
-                "Exported table {table_name} in database {database} to {}/{file_name}",
-                folder_path.display()
-            );
-            self.project_logger.log_debug(&debug_str);
-            Ok(())
-        } else {
-            let error_str = format!(
-                "Unable to export table {table_name} in database {database} to {}/{file_name}",
-                folder_path.display()
-            );
-            self.project_logger.log_error(&error_str);
-            Err(clickhouse::error::Error::Custom(error_str))
-        }
+        let status = self
+            .parquet_export_command(database, table_name, None, folder_path, file_name)
+            .status();
+        self.check_parquet_export(status, database, table_name, folder_path, file_name)
     }
 
     pub fn export_table_to_parquet_with_filter(
@@ -422,36 +440,37 @@ impl<'a> ClickHouse<'a> {
         folder_path: &Path,
         file_name: &str,
     ) -> Result<()> {
-        let status = Command::new(Self::CLICKHOUSE_LOCAL)
-            .arg("--query")
-            .arg(format!("SELECT * FROM remote('{}', '{database}.{table_name}', '{}', '{}') WHERE {filter_str} INTO OUTFILE '{}/{file_name}' FORMAT Parquet",
-                Self::LOCAL_HOST_PORT,
-                Self::USER_NAME,
-                self.password,
-                folder_path.display(),
-            ))
-            .status()
-            .map_err(|e| {
-                let error_str = format!("Unable to execute command. {e}");
-                let error_str_redacted = error_str.replace(&self.password, "***");
-                self.project_logger.log_error(&error_str_redacted);
-                e
-            })?;
-        if status.success() {
-            let debug_str = format!(
-                "Exported table {table_name} in database {database} to {}/{file_name}",
-                folder_path.display()
-            );
-            self.project_logger.log_debug(&debug_str);
-            Ok(())
-        } else {
-            let error_str = format!(
-                "Unable to export table {table_name} in database {database} to {}/{file_name}",
-                folder_path.display()
-            );
-            self.project_logger.log_error(&error_str);
-            Err(clickhouse::error::Error::Custom(error_str))
-        }
+        let status = self
+            .parquet_export_command(
+                database,
+                table_name,
+                Some(filter_str),
+                folder_path,
+                file_name,
+            )
+            .status();
+        self.check_parquet_export(status, database, table_name, folder_path, file_name)
+    }
+
+    /// Same command and error handling as the synchronous export, without blocking
+    /// an async worker while clickhouse-local exports the dataset.
+    pub async fn export_table_to_parquet_with_filter_async(
+        &self,
+        database: &str,
+        table_name: &str,
+        filter_str: &str,
+        folder_path: &Path,
+        file_name: &str,
+    ) -> Result<()> {
+        let command = self.parquet_export_command(
+            database,
+            table_name,
+            Some(filter_str),
+            folder_path,
+            file_name,
+        );
+        let status = tokio::process::Command::from(command).status().await;
+        self.check_parquet_export(status, database, table_name, folder_path, file_name)
     }
 
     pub async fn count_row_in_table(
@@ -760,6 +779,36 @@ mod tests {
     use strum_macros::{Display, VariantArray};
 
     use super::*;
+
+    #[test]
+    fn test_parquet_export_command_preserves_existing_arguments() {
+        let logger = ProjectLogger::new_logger(Path::new("/tmp"), "export-command-fixture");
+        let clickhouse = ClickHouse {
+            project_logger: &logger,
+            password: "fixture-password".into(),
+        };
+        for (filter, condition) in [
+            (None, ""),
+            (
+                Some("insert_time >= 10 AND insert_time < 20"),
+                " WHERE insert_time >= 10 AND insert_time < 20",
+            ),
+        ] {
+            let command = clickhouse.parquet_export_command(
+                "fixture_db",
+                "fixture_table",
+                filter,
+                Path::new("/staging"),
+                "fixture.parquet",
+            );
+            assert_eq!(command.get_program(), "clickhouse-local");
+            let args: Vec<_> = command
+                .get_args()
+                .map(|arg| arg.to_str().unwrap())
+                .collect();
+            assert_eq!(args, ["--query", &format!("SELECT * FROM remote('localhost:9000', 'fixture_db.fixture_table', 'default', 'fixture-password'){condition} INTO OUTFILE '/staging/fixture.parquet' FORMAT Parquet")]);
+        }
+    }
 
     #[derive(Debug, Display, VariantArray)]
     pub enum TestDataCol {

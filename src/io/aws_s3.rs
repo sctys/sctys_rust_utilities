@@ -804,13 +804,19 @@ impl From<std::io::Error> for AWSLoadFileError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AWSWriteFileError {
+    #[error(transparent)]
     SdkError(SdkError<PutObjectError, HttpResponse>),
+    #[error(transparent)]
     PolarsError(PolarsError),
+    #[error(transparent)]
     IOError(std::io::Error),
+    #[error(transparent)]
     CreateMultipartUploadError(SdkError<CreateMultipartUploadError, HttpResponse>),
+    #[error(transparent)]
     UploadPartError(SdkError<UploadPartError, HttpResponse>),
+    #[error(transparent)]
     CompleteMultipartUploadError(SdkError<CompleteMultipartUploadError, HttpResponse>),
 }
 
