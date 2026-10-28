@@ -59,6 +59,7 @@ struct PersistedJsClearance {
 pub enum RquestBrowser {
     Chrome120,
     Chrome135,
+    Chrome149,
 }
 
 pub struct SourceScraper<'a> {
@@ -133,6 +134,7 @@ impl<'a> SourceScraper<'a> {
         let emulation = match browser {
             RquestBrowser::Chrome120 => Emulation::Chrome120,
             RquestBrowser::Chrome135 => Emulation::Chrome135,
+            RquestBrowser::Chrome149 => Emulation::Chrome149,
         };
         // wreq's implicit default does not deterministically follow redirects;
         // make the behavior explicit per source via follow_redirects.
@@ -633,8 +635,13 @@ impl<'a> SourceScraper<'a> {
                     }
                 })?;
             if request_options.proxy_block_count > 0
-                && response.status() == wreq::StatusCode::FORBIDDEN
+                && response.status() == reqwest::StatusCode::FORBIDDEN
             {
+                let warn_str = format!(
+                    "Reqwest proxy {}:{} returned 403 for {}",
+                    proxy_result.proxy_address, proxy_result.port, url
+                );
+                self.logger.log_warn(&warn_str);
                 scraper_proxy.add_proxy_block_count(&proxy_result);
             };
             response
@@ -758,6 +765,11 @@ impl<'a> SourceScraper<'a> {
             if request_options.proxy_block_count > 0
                 && response.status() == wreq::StatusCode::FORBIDDEN
             {
+                let warn_str = format!(
+                    "Rquest proxy {}:{} returned 403 for {}",
+                    proxy_result.proxy_address, proxy_result.port, url
+                );
+                self.logger.log_warn(&warn_str);
                 scraper_proxy.add_proxy_block_count(&proxy_result);
                 scraper_proxy.clear_sticky_proxy();
             };

@@ -1,6 +1,10 @@
 //! One scraper execution engine with per-run mutable sessions and focused hooks.
 use async_trait::async_trait;
-use std::{collections::HashSet, fmt::Display, hash::Hash};
+use std::{
+    collections::HashSet,
+    fmt::{self, Display},
+    hash::Hash,
+};
 
 pub fn response_status_message(status_code: impl Display, reason: impl Display) -> String {
     format!("Response with status code {status_code}. {reason}")
@@ -79,11 +83,45 @@ pub struct ScrapeReport {
     pub succeeded: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttemptFailureKind {
+    ErrContinue,
+    ErrTerminate,
+}
+
+impl Display for AttemptFailureKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ErrContinue => f.write_str("ErrContinue"),
+            Self::ErrTerminate => f.write_str("ErrTerminate"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct AttemptFailure<E> {
     pub input_index: usize,
+    /// Number of failed attempts for this input, including the current failure.
     pub failed_attempts: usize,
+    pub kind: AttemptFailureKind,
     pub will_retry: bool,
     pub source: E,
+}
+
+impl<E: Display> Display for AttemptFailure<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let trial_suffix = if self.failed_attempts == 1 { "" } else { "s" };
+        let outcome = match (self.kind, self.will_retry) {
+            (AttemptFailureKind::ErrContinue, true) => "ErrContinue; retrying",
+            (AttemptFailureKind::ErrContinue, false) => "ErrContinue; retries exhausted",
+            (AttemptFailureKind::ErrTerminate, _) => "ErrTerminate; terminating",
+        };
+        write!(
+            f,
+            "Failed after {} trial{trial_suffix} ({outcome}): {}",
+            self.failed_attempts, self.source
+        )
+    }
 }
 
 /// Session is created for one invocation and borrowed mutably by every hook.
@@ -157,7 +195,8 @@ pub trait ScrapeHooks: Send {
         success: bool,
     ) -> Result<(), Self::Error>;
     async fn pause(&mut self, retry: bool);
-    async fn attempt_failed(&mut self, _event: AttemptFailure<Self::Error>) {}
+    /// Reports a classified response failure. Formatting the event includes its trial count.
+    async fn attempt_failed(&mut self, event: AttemptFailure<Self::Error>);
     async fn close_input(&mut self, session: &mut Self::Session) -> Result<(), Self::Error>;
     async fn finalize(&mut self, report: ScrapeReport) -> Result<(), Self::Error>;
 }
@@ -250,6 +289,7 @@ pub async fn run_scraper<H: ScrapeHooks>(
                                     .await
                                     .map_err(|source| fail(ScrapeStage::Log, source))?;
                                 report.attempted = report.attempted.saturating_add(1);
+                                hooks.progress(report);
                                 hooks.pause(false).await;
                                 break;
                             }
@@ -294,6 +334,7 @@ pub async fn run_scraper<H: ScrapeHooks>(
                         .attempt_failed(AttemptFailure {
                             input_index: index,
                             failed_attempts: failures,
+                            kind: AttemptFailureKind::ErrContinue,
                             will_retry: failures < policy.max_attempts,
                             source,
                         })
@@ -315,10 +356,12 @@ pub async fn run_scraper<H: ScrapeHooks>(
                     reason = RequestReason::Retry;
                 }
                 ResponseDecision::Reject(source) => {
+                    failures = failures.saturating_add(1);
                     hooks
                         .attempt_failed(AttemptFailure {
                             input_index: index,
                             failed_attempts: failures,
+                            kind: AttemptFailureKind::ErrTerminate,
                             will_retry: false,
                             source,
                         })
