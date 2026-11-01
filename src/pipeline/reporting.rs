@@ -19,6 +19,13 @@ pub fn export_window_summary(start: impl Display, end: impl Display) -> String {
     format!("Export window: {start} to {end}")
 }
 
+pub fn no_export_datasets_summary(datasets: &[String]) -> String {
+    format!(
+        "No export was produced for these dataset tables:\n- {}",
+        datasets.join("\n- ")
+    )
+}
+
 pub fn current_month_run_date_error(selected: impl Display) -> String {
     format!("The run date is for this month. The run date is {selected}.")
 }

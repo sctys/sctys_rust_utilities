@@ -33,6 +33,7 @@ pub enum ExportOutcome {
     Completed,
     SkippedMissing,
     SkippedEmpty,
+    SkippedInactive,
 }
 
 /// The original dataset handle, failed stage, and unmodified backend error.
@@ -57,6 +58,10 @@ pub struct ExportFailure<D, E> {
 pub trait DatasetExport<D: Send + Sync>: Sync {
     type Error;
 
+    /// Inactive datasets are excluded before table checks or export work.
+    fn is_inactive(&self, _dataset: &D) -> bool {
+        false
+    }
     fn needs_finalization(&self, dataset: &D) -> bool;
     async fn table_exists(&self, dataset: &D) -> Result<bool, Self::Error>;
     async fn finalize(&self, dataset: &D) -> Result<(), Self::Error>;
@@ -82,6 +87,9 @@ where
 {
     let mut stage = ExportStage::CheckExistence;
     let result = async {
+        if backend.is_inactive(&dataset) {
+            return Ok(ExportOutcome::SkippedInactive);
+        }
         if !backend.table_exists(&dataset).await? {
             return Ok(ExportOutcome::SkippedMissing);
         }
@@ -141,6 +149,7 @@ mod tests {
         exists: bool,
         rows: bool,
         finalize: bool,
+        inactive: bool,
         fail_at: Option<ExportStage>,
         operations: Mutex<Vec<ExportStage>>,
     }
@@ -151,6 +160,7 @@ mod tests {
                 exists: true,
                 rows: true,
                 finalize: true,
+                inactive: false,
                 fail_at: None,
                 operations: Mutex::new(Vec::new()),
             }
@@ -176,6 +186,9 @@ mod tests {
     impl<D: AsRef<str> + Send + Sync> DatasetExport<D> for FakeExport {
         type Error = std::io::Error;
 
+        fn is_inactive(&self, _: &D) -> bool {
+            self.inactive
+        }
         fn needs_finalization(&self, _: &D) -> bool {
             self.finalize
         }
@@ -230,6 +243,19 @@ mod tests {
             );
             assert_eq!(*backend.operations.lock().unwrap(), operations);
         }
+    }
+
+    #[tokio::test]
+    async fn test_inactive_dataset_is_skipped_before_any_export_operation() {
+        let backend = FakeExport {
+            inactive: true,
+            ..FakeExport::default()
+        };
+        assert_eq!(
+            export_dataset("test_dataset", &backend).await.unwrap(),
+            ExportOutcome::SkippedInactive
+        );
+        assert!(backend.operations.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

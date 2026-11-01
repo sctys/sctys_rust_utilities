@@ -31,7 +31,7 @@ use crate::{
     aws_s3::{AWSFileIO, AWSWriteFileError},
     mongo_db::MongoDB,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Days, Utc};
 use mongodb::{
     bson::{doc, Document},
     Collection, Cursor,
@@ -53,6 +53,16 @@ pub struct TimeWindow {
     pub end: EndBound,
 }
 impl TimeWindow {
+    /// Returns a window from the selected start through one day after `now`.
+    /// The start is inclusive and the end is exclusive.
+    pub fn default_export_window(from: DateTime<Utc>, now: DateTime<Utc>) -> Self {
+        Self {
+            from,
+            to: now + Days::new(1),
+            end: EndBound::Exclusive,
+        }
+    }
+
     pub fn filter(&self, column: &str) -> String {
         format!(
             "{column} >= {} AND {column} {} {}",

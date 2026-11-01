@@ -76,6 +76,10 @@ pub trait RunOperations<M: Send, D: Copy + Send + Sync>: Send {
     async fn before_export(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
+    /// Called once after the selected export scope has finished. `not_exported`
+    /// contains active datasets skipped because their table was missing or the
+    /// selected window had no rows; inactive datasets are omitted.
+    async fn after_export(&mut self, _not_exported: &[(D, ExportOutcome)]) {}
     async fn setup(&mut self, services: ServiceNeeds) -> Result<(), Self::Error>;
     async fn parse(&mut self, module: M) -> Result<(), Self::Error>;
     async fn backup(&mut self, module: M) -> Result<(), Self::Error>;
@@ -208,6 +212,7 @@ where
         dataset: None,
         source,
     })?;
+    let mut not_exported = Vec::new();
     for dataset in ordered_datasets(&selection.export_modules, datasets) {
         let outcome = export_dataset(dataset, backend.export_backend())
             .await
@@ -217,7 +222,17 @@ where
                 dataset: Some(dataset),
                 source: failure.source,
             })?;
-        report.exports.push((dataset, outcome));
+        match outcome {
+            ExportOutcome::SkippedInactive => {}
+            ExportOutcome::SkippedMissing | ExportOutcome::SkippedEmpty => {
+                not_exported.push((dataset, outcome));
+                report.exports.push((dataset, outcome));
+            }
+            ExportOutcome::Completed => report.exports.push((dataset, outcome)),
+        }
+    }
+    if !not_exported.is_empty() {
+        backend.after_export(&not_exported).await;
     }
     Ok(())
 }
@@ -246,6 +261,8 @@ mod tests {
     struct Backend {
         trace: Trace,
         fail: Option<&'static str>,
+        rows: bool,
+        inactive: Option<u8>,
     }
     impl Backend {
         fn step(&self, event: String) -> Result<(), &'static str> {
@@ -260,6 +277,9 @@ mod tests {
     #[async_trait]
     impl DatasetExport<u8> for Backend {
         type Error = &'static str;
+        fn is_inactive(&self, dataset: &u8) -> bool {
+            self.inactive == Some(*dataset)
+        }
         fn needs_finalization(&self, _: &u8) -> bool {
             true
         }
@@ -272,7 +292,7 @@ mod tests {
         }
         async fn has_rows(&self, d: &u8) -> Result<bool, Self::Error> {
             self.step(format!("rows:{d}"))?;
-            Ok(true)
+            Ok(self.rows)
         }
         async fn export(&self, d: &u8) -> Result<(), Self::Error> {
             self.step(format!("export:{d}"))
@@ -297,6 +317,12 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+        async fn after_export(&mut self, not_exported: &[(u8, ExportOutcome)]) {
+            self.trace
+                .lock()
+                .unwrap()
+                .push(format!("notify:{}", not_exported.len()));
         }
         async fn setup(&mut self, _: ServiceNeeds) -> Result<(), Self::Error> {
             self.step("setup".into())
@@ -324,6 +350,8 @@ mod tests {
         Backend {
             trace: Trace::default(),
             fail,
+            rows: true,
+            inactive: None,
         }
     }
     fn datasets(m: &char) -> Vec<u8> {
@@ -451,6 +479,8 @@ mod tests {
         let mut backend = Backend {
             trace: trace.clone(),
             fail: Some("window"),
+            rows: true,
+            inactive: None,
         };
         let selection = ModuleSelection::new(vec!['A'], None, false);
         assert!(matches!(
@@ -471,6 +501,28 @@ mod tests {
         assert_eq!(
             *trace.lock().unwrap(),
             ["setup", "parse:A", "backup:A", "remove:A", "window"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_export_datasets_are_reported_once_after_the_scope_finishes() {
+        let mut b = backend(None);
+        b.rows = false;
+        b.inactive = Some(2);
+        let selection = ModuleSelection::new(vec!['A'], None, false);
+        let report = run(
+            &selection,
+            RunMode::Export,
+            |_| vec![1u8, 2],
+            |_| false,
+            &mut b,
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.exports, [(1, ExportOutcome::SkippedEmpty)]);
+        assert_eq!(
+            *b.trace.lock().unwrap(),
+            ["setup", "exists:1", "finalize:1", "rows:1", "notify:1"]
         );
     }
 }
