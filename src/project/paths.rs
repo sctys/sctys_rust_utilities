@@ -32,7 +32,7 @@ pub struct Layout<'a> {
 }
 
 impl<'a> Layout<'a> {
-    /// Builds the shared project layout used by the consumer applications.
+    /// Builds a layout with the standard folder and file-prefix conventions.
     pub const fn standard(project: &'a str, backup_root: BackupRoot) -> Self {
         Self {
             project,

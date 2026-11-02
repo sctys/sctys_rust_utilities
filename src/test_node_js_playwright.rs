@@ -74,7 +74,7 @@ const { chromium } = require('playwright');
     
     const page = await context.newPage();
     
-    await page.goto('https://www.scoresway.com/en_GB/soccer/competitions', {
+    await page.goto('https://example.com/', {
         waitUntil: 'networkidle'
     });
     

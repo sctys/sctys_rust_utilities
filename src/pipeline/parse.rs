@@ -139,7 +139,7 @@ pub fn decode_append<D, R, E>(
     }
 }
 
-/// Stock's parallel atomic decoder retains declaration order and commits no
+/// Parallel atomic decoding retains declaration order and commits no
 /// rows if any document fails, just like the sequential atomic contract.
 pub fn decode_parallel_append<D: Sync, R: Send, E: Send>(
     documents: &[D],

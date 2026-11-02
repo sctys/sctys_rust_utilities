@@ -5,8 +5,7 @@ use std::fmt::Display;
 pub struct HtmlTag {}
 
 impl HtmlTag {
-    /// Parses a CSS selector, preserving the error message used by downstream
-    /// scraper implementations.
+    /// Parses a CSS selector with the shared selector-error format.
     pub fn parse_selector(tag: &str) -> Selector {
         Selector::parse(tag)
             .unwrap_or_else(|error| panic!("{}", selector_parse_error_message(tag, error)))

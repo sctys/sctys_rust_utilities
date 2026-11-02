@@ -832,7 +832,7 @@ mod tests {
     //     let file_io = FileIO::new(&project_logger);
     //     let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
     //     let browse_action = extra_action;
-    //     let url = Url::parse("https://www.nowgoal.com/").unwrap();
+    //     let url = Url::parse("https://example.com/").unwrap();
     //     web_scraper.turn_on_chrome_process();
     //     let content =
     //         web_scraper.retry_browse_request(&url, browse_action, WebScraper::null_check_func);
@@ -861,8 +861,8 @@ mod tests {
     //     let file_io = FileIO::new(&project_logger);
     //     let browse_action = extra_action;
     //     let mut web_scraper = WebScraper::new(&project_logger, &slack_messenger, &file_io);
-    //     let url_suffix = ["football/live", "football/results", "football/schedule"];
-    //     let url = Url::parse("https://www.nowgoal.com/").unwrap();
+    //     let url_suffix = ["items/live", "items/results", "items/schedule"];
+    //     let url = Url::parse("https://example.com/").unwrap();
     //     let file = "test_browse{index}.html";
     //     let url_file_list = Vec::from_iter(url_suffix.iter().enumerate().map(|(i, x)| {
     //         UrlFile::new(

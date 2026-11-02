@@ -65,7 +65,7 @@ Errors are returned; call `next()` again to reconnect with 100 ms–5 s exponent
 backoff. Dropping the watcher closes the connection. There is no durable observer
 cursor: a newly created watcher returns the current snapshot again.
 
-Use separate group names for independent downstream applications and the same
+Use separate group names for independent applications and the same
 group for replicas sharing work. `try_claim` returns `None` if the topic is absent,
 the newest version is already acknowledged, or another worker owns a live lease.
 It does not wait. Poll with a delay, or combine it with watcher notifications and

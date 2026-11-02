@@ -890,7 +890,10 @@ mod tests {
         project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let bucket_name = "sctys";
-        let folder_name = Path::new("data/poisson_football");
+        // Provision the fixture folder before running this live S3 test.
+        let fixture_folder = env::var("AWS_S3_TEST_FOLDER")
+            .expect("AWS_S3_TEST_FOLDER must name a provisioned test folder");
+        let folder_name = Path::new(&fixture_folder);
         assert!(
             aws_file_io
                 .check_folder_exist(bucket_name, folder_name)
@@ -914,11 +917,15 @@ mod tests {
         project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let bucket_name = "sctys";
-        let folder_name = Path::new("data/poisson_football/");
-        let file_name = "test_list.html";
+        // Provision the fixture folder before running this live S3 test.
+        let fixture_folder = env::var("AWS_S3_TEST_FOLDER")
+            .expect("AWS_S3_TEST_FOLDER must name a provisioned test folder");
+        let folder_name = Path::new(&fixture_folder);
+        let file_name = env::var("AWS_S3_TEST_FILE")
+            .expect("AWS_S3_TEST_FILE must name a provisioned test file");
         assert!(
             aws_file_io
-                .check_file_exist(bucket_name, folder_name, file_name)
+                .check_file_exist(bucket_name, folder_name, &file_name)
                 .await
         );
         let file_name = "abc";
@@ -956,7 +963,10 @@ mod tests {
         project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let bucket_name = "sctys";
-        let folder_name = Path::new("data/poisson_football");
+        // Provision the fixture folder before running this live S3 test.
+        let fixture_folder = env::var("AWS_S3_TEST_FOLDER")
+            .expect("AWS_S3_TEST_FOLDER must name a provisioned test folder");
+        let folder_name = Path::new(&fixture_folder);
         let elements = aws_file_io
             .get_elements_in_folder(bucket_name, folder_name)
             .await
@@ -974,10 +984,14 @@ mod tests {
         project_logger.set_logger(LevelFilter::Debug);
         let aws_file_io = AWSFileIO::new(&project_logger).await;
         let bucket_name = "sctys";
-        let folder_name = Path::new("data/poisson_football/");
-        let file_name = "test_list.html";
+        // Provision the fixture folder before running this live S3 test.
+        let fixture_folder = env::var("AWS_S3_TEST_FOLDER")
+            .expect("AWS_S3_TEST_FOLDER must name a provisioned test folder");
+        let folder_name = Path::new(&fixture_folder);
+        let file_name = env::var("AWS_S3_TEST_FILE")
+            .expect("AWS_S3_TEST_FILE must name a provisioned test file");
         let content = aws_file_io
-            .load_file_as_string(bucket_name, folder_name, file_name)
+            .load_file_as_string(bucket_name, folder_name, &file_name)
             .await
             .unwrap();
         println!("{:?}", content);

@@ -183,7 +183,7 @@ pub async fn report_scrapes<D: Sync, B: LogCounts<D>>(
     Ok(Some(message))
 }
 
-/// The legacy stock and sports query shapes are deliberately distinct settings.
+/// Boolean-column predicate styles are explicit query settings.
 #[derive(Clone, Copy)]
 pub enum ScrapedPredicate {
     Truthy,

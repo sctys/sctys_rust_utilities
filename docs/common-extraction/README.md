@@ -1,10 +1,8 @@
-# Shared framework implementation
+# Shared framework APIs
 
-The initial framework implementation focused on this library. A follow-up on
-October 24, 2026, updated the three application `common` crates to adopt the
-shared row, record-key, query, time-window, path, file-name, and insert-time
-conventions described below. This is a focused consumer rollout, not completion
-of the plan's full phase G removal audit.
+This guide describes the reusable mechanisms implemented in this library.
+Callers supply domain definitions and policies through traits, metadata, and
+configured adapters.
 
 ## Implementation ownership
 
@@ -30,10 +28,7 @@ of the plan's full phase G removal audit.
 | Report text and configured Slack routing | `reporting` | Names, route/channel and local termination decision |
 | Scheduled log-count reporting | `reporting::{report_scrapes, ClickHouseLogCounts}` | Selected modules, cutoff, clock, table/column identities and legacy boolean predicate shape |
 
-## Shared conventions found in downstream code
-
-The downstream common crates repeated these values and message formats. The
-library now owns them so consumers can import one definition:
+## Shared conventions
 
 | Convention | Shared API |
 | --- | --- |
@@ -53,161 +48,64 @@ library now owns them so consumers can import one definition:
 | Dataset marker filtering and bookkeeping classification | `pipeline::metadata::{values_with_name_marker, is_bookkeeping_dataset_name}` |
 | CSS selector parsing | `netdata::HtmlTag` |
 
-## Consumer adoption audit (October 24, 2026)
+## Contracts and failure behavior
 
-All three consumer `common` crates now use the shared `CutoffDateRecord` schema;
-their cutoff calculation and selection policies remain application-owned.
-Football re-exports the shared `CommonScraperKeys`, and football and basketball
-delegate scraper-log query construction to `RecordColumns::input_query` and
-date-range checks to `TableStore::has_rows` with `TimeWindow`. Basketball also
-uses the shared project-root, bucket, archive, file-name, Parquet-extension and
-insert-time constants. Stock's export and cutoff query use the shared
-`INSERT_TIME_FIELD`. All three expose the shared `netdata::HtmlTag`.
+- `BackupRoot` chooses whether backup paths are relative to a project directory
+  or a storage root. Project identities, prefixes, and legacy names are inputs.
+- Active filtering preserves input order. Selection and export scopes remain
+  explicit, including resume behavior and explicitly selected inactive modules.
+- `TimeWindow` and `EndBound` specify row-check and export boundaries separately.
+- `DatasetExportSpec::replace_staging` controls replacement of the selected
+  staging file; unrelated files are never selected implicitly.
+- Borrowed inserts leave the caller's buffer intact. Owned flushes clear rows
+  only after success. Partial insertion is not transactional and adds no retry.
+- Parser outputs flush in declaration order, including final rows below the
+  threshold. Earlier outputs may have committed when a later output fails.
+- `decode_append` supports atomic-batch and per-document commit policies.
+  `decode_parallel_append` preserves declaration order and atomic output commit.
+- `InputRecordFactory` combines caller-defined input decoding with shared payload
+  and modification-time attachment. Exceptional formats can implement
+  `SavedRecordFactory` directly.
+- Retry-header preparation, challenge replay, and pagination continuation have
+  separate reasons and explicit preparation/budget policies.
+- `TransportSession::header_context` exposes disjoint mutable request, proxy,
+  and domain borrows across async hooks. Session state remains local to a run.
+- Clearance persistence supports disabled, best-effort, and required policies.
+  Best-effort failures warn and retain in-memory operation; required failures
+  return an error.
+- Archive traversal skips symlinks, rejects non-Unicode directory tokens, and
+  requires relative archive member paths.
+- Storage export uploads before copying and removing staging files. Failed copies
+  retain the source; there is no rollback or implicit failure cleanup.
+- Factories and engines return errors. An explicitly selected reporting boundary
+  can send a notification and apply the caller's termination policy.
+- Async workflows use async file operations and subprocess waiting. Compression
+  runs on the blocking pool. Synchronous and async export entry points share
+  command construction and error handling.
 
-This follow-up passed a workspace check in each consumer and Clippy across all
-targets and features of each `common` crate. The broader method-by-method phase G
-review remains open; this audit records only the shared component adoption in
-these common-layer areas.
+## Validation
 
-The next consumer pass moved backup and row-count adapters, filename-token
-conversion, parse-and-finalize ordering, and archive compression dispatch onto
-shared APIs in all three crates. Stock now uses the shared file, AWS and
-compression service factories. Basketball also delegates bookkeeping markers,
-bookkeeping classification, S3 data-path construction and run-summary text.
-Source-specific parser decoding, error context and memory thresholds remain
-application policies. The broader phase G removal audit remains open.
+The integration fixtures compile this library through its public interface:
 
-The source-level scan also found a cursor transform-and-upsert loop in both
-football `odds_portal` and basketball `oddsportal`. It applies each project's
-season mapping to its local fixture record, so it remains domain logic. The
-football and basketball visitor-challenge implementations also remain local as
-required by the provider-hook boundary above.
+- `tests/framework_contracts.rs` exercises generated record families, renamed
+  macro imports, serialization/column order, adapter traits, and async borrows.
+- `tests/workflow_failures.rs` checks preparation errors, bookkeeping filtering,
+  archive failures, and saved-file metadata with temporary filesystem fixtures.
+- Inline pipeline tests exercise ordering, retry/replay behavior, batching,
+  final flushes, partial failures, and reporting boundaries.
+- Project tests inject root and secret readers rather than initialize services.
 
-The existing foundational APIs remain available. `run_parse_with` is additive:
-its lending async closure can borrow a mutable backend across `await`, while
-`run_parse_steps` retains its existing callback contract and delegates to it.
-No provider definitions, concrete project identities, schedules or domain schemas
-were added to the library.
+Run the focused suites and static checks locally:
 
-## Contract and behavior notes
+```sh
+cargo test --lib pipeline::
+cargo test --lib project::
+cargo test --test framework_contracts --test workflow_failures
+cargo test --doc
+cargo clippy --all-targets --all-features
+cargo fmt --check
+git diff --check
+```
 
-- Stock and football place backups below their project data directory; basketball
-  places backups directly below the SSD data root. `BackupRoot` represents the
-  distinction explicitly. Module prefixing and legacy names are caller values.
-- Active discovery differs: stock already filters inactive modules; the sports
-  repositories filter in selection. Shared filtering is stable and can accept
-  an already-filtered list. An explicitly selected inactive module is still
-  allowed; absent resume targets retain the active export scope.
-- Row-window checks and exports have differing historical end inclusions.
-  `TimeWindow` and `EndBound` keep those independent. No inclusive boundary is
-  inferred from another operation's window.
-- Football replaces the selected stale staging file; stock and basketball do not
-  automatically adopt that policy. `DatasetExportSpec::replace_staging` is explicit.
-- Stock/football borrowing versus basketball clear-on-success is represented by
-  separate borrowed and owned operations, with one implementation of clearing.
-  Partial insertion is not transactional, and a failed owned flush retains the
-  whole buffer and allocation. No insertion retry is added.
-- The parser engine decodes buffered input in declaration order, then flushes
-  outputs in declaration order. Earlier successful outputs may already have
-  been cleared when a later output fails. Final data is flushed below thresholds.
-  `decode_append` owns the per-document decode loop, with atomic-batch and
-  per-document commit settings for the existing differing failure-buffer contracts.
-- Ordinary saved records use `InputRecordFactory`: the local hook produces only
-  an input value. The shared implementation attaches payload and modification
-  time and constructs the record. Exceptional formats may implement the full
-  saved-record factory contract directly.
-- Scraper retry-header and provider-replay preparation are distinct reasons.
-  Replay budget consumption and preparation are explicit policy values. The old
-  stock loop's nested retry placement must be checked when migrating its header
-  hook; this library change does not change that application or certify its trace.
-  Pagination continuation also has a separate, explicit preparation setting.
-- `TransportSession::header_context` provides disjoint mutable request/proxy/domain
-  borrows and selected-client access across async hooks. Provider implementations
-  can combine this session with a local visitor session; no global mutable state
-  or self-referential owning service object is required.
-- Clearance Redis persistence has disabled, best-effort and required policies.
-  It is actually connected when enabled. Best-effort failures warn and retain
-  in-memory operation; required failures return an error.
-- Archive traversal skips symlinks and rejects non-Unicode directory tokens.
-  Archive member names must stay relative. These are explicit new API contracts;
-  legacy application walkers remain unchanged until their adapters are reviewed.
-- `StorageExport` uploads before copying and removing the staging file. There is
-  no rollback or failure cleanup. Failed copies retain the source; stale-file
-  deletion is restricted to the supplied staging filename.
-- Factories and engines return errors; only the selected external reporting
-  boundary sends a notification. Internal low-level clients retain their existing
-  logging behavior. Production services are never initialized by the fake tests.
-- Async workflows use async file operations and subprocess waiting; archive
-  compression runs on the blocking pool. Existing synchronous ClickHouse export
-  entry points remain available and share their command construction and error
-  handling with the new async export method. Their SQL arguments are fixture-tested.
-
-## Method inventory
-
-`method-ownership.tsv` inventories 5,000+ declarations from the current common
-crates and source-specific scraper/parser/runner modules. Each row records the
-repository, source path, line, declaration context, method and ownership target.
-This is a baseline routing inventory, including private helpers and source-domain
-methods to expose copied workflow overrides. It is not a claim that application
-migration or a semantic removal audit has happened. Generated declarations are
-represented by their generator and record contracts.
-
-Before migrating a source, compare its operation trace and serialization fixtures
-against this inventory. In particular, inspect `parse_source_dataset`,
-`ParserForScraped`, Barchart retry-header overrides, visitor-session hooks,
-Betting Pro/Euro Basketball output declarations, and handwritten field parsers.
-An application hook may decode a payload or issue one query/request; it must not
-contain another cursor, retry, import, archive or mode-dispatch loop.
-
-## Validation fixtures
-
-- Inline pipeline tests cover selection, ordering, all export errors, batch and
-  parser failures, typed multi-output thresholds, repeated/final flushes, scraper
-  success/retry/exhaustion/rejection/replay/fatal/persistence paths, runner modes,
-  removal exclusions and a single notification boundary.
-- `tests/framework_contracts.rs` is compiled as an external crate. It invokes the
-  macro through a renamed import without bringing derive helpers into scope,
-  declares stock and sports families, checks field/column order and JSON/BSON,
-  exercises associated source types, and compiles async mutable session borrows.
-- `tests/workflow_failures.rs` checks module-level cursor/row-count preparation,
-  bookkeeping exclusions, every archive failure stage, and saved-file metadata
-  attachment/import failure ordering with temporary filesystem fixtures.
-- Project tests inject root and secret readers. Archive tests create and read a
-  local compressed tar and verify copy-before-remove and failed-copy retention.
-
-Live scraping and production uploads are not validation steps performed here.
-The consumer workspace checks below compile the updated repositories without
-calling production services.
-
-## Current validation (October 23, 2026)
-
-Passed 57 distinct focused tests covering the pipeline, project, batching,
-external-consumer and workflow fixtures and ClickHouse export-command
-compatibility. Eight doctests passed. `cargo check`,
-`cargo clippy --all-targets --all-features`, `cargo fmt --check` and
-`git diff --check` passed. No live services were called by these tests.
-
-The shared cutoff-date row schema was also covered by the consumer contract test:
-
-- `cargo test --test framework_contracts` (6 tests).
-- `cargo fmt --check` and `git diff --check`.
-
-## Consumer migration validation (October 24, 2026)
-
-Passed:
-
-- `cargo check --workspace --locked` in `isa_stock_rust`,
-  `poisson_football_rust` and `poisson_basketball_rust`.
-- `cargo clippy --locked --all-targets --all-features` for each repository's
-  `common` crate.
-- `cargo fmt` for each `common` crate and `git diff --check` in all three repos.
-
-## Follow-up consumer validation (October 24, 2026)
-
-Passed `cargo check --manifest-path common/Cargo.toml` in all three consumer
-repositories. The shared filename-token, parse-finalizer and async archive
-helpers passed focused unit tests; formatting and `git diff --check` passed in
-the utilities repository. No production services were called.
-
-The pre-existing `Cargo.toml` compression-feature and build-profile edits are
-preserved; this framework implementation adds no dependencies.
+Live service tests require their own environment configuration and credentials;
+they are separate from the pure framework contract tests.

@@ -336,8 +336,8 @@ async function initBrowser(headlessMode = false) {
         };
 
         // Prefer the installed Google Chrome. The bundled Chromium cannot solve
-        // some Cloudflare managed challenges (e.g. trading212.com) and stays on
-        // the "Just a moment..." interstitial indefinitely.
+        // some managed challenges with strict browser checks and stays on the
+        // "Just a moment..." interstitial indefinitely.
         const channel = process.env.SCTYS_PLAYWRIGHT_CHANNEL || 'chrome';
         try {
             browser = await chromium.launch({ ...launchOptions, channel });
@@ -424,9 +424,9 @@ async function closeContext(contextId) {
     return false;
 }
 
-// Cloudflare and similar WAF interstitials (e.g. trading212.com) can satisfy
-// `networkidle` before the challenge finishes solving. Detect the interstitial
-// and wait for it to disappear so the real page content is read.
+// WAF interstitials can satisfy `networkidle` before the challenge finishes
+// solving. Detect the interstitial and wait for it to disappear so the real
+// page content is read.
 async function isWafChallengePage(page) {
     try {
         const title = await page.title();
@@ -477,9 +477,9 @@ async function navigate(contextId, url, timeout = 60000, waitUntil = 'networkidl
         let ok = response ? response.ok() : true;
         const reason = response ? response.statusText() : '';
 
-        // WAF challenge pages (e.g. barchart.com) return 202 and reload the page once
-        // the token is solved; the goto response reflects the challenge, not the final
-        // page. Read the real status from the navigation timing entry.
+        // Some WAF challenge pages return 202 and reload once the token is solved.
+        // The goto response reflects the challenge; read the final page's status
+        // from the navigation timing entry.
         if (statusCode === 202) {
             const finalStatus = await page
                 .evaluate(() => {

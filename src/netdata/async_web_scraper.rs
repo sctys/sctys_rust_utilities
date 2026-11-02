@@ -3,7 +3,6 @@
 use polars::io::SerReader;
 use polars::prelude::{CsvReadOptions, DataFrame};
 use reqwest::{Client, Proxy, RequestBuilder, Url};
-// use sctys_proxy::{PrivateProxy, PrivateVpn, ScraperProxy};
 use std::future::Future;
 use std::io::Cursor;
 use std::path::Path;
@@ -1023,7 +1022,6 @@ mod tests {
     use super::*;
     use crate::utilities_function;
     use log::LevelFilter;
-    // use sctys_proxy::ScraperProxy;
     use serde::Deserialize;
     use std::env;
     use std::fs;
@@ -1440,7 +1438,7 @@ mod tests {
     //         aws_bucket,
     //     );
     //     let browse_action = extra_action;
-    //     let url = Url::parse("https://www.nowgoal.com").unwrap();
+    //     let url = Url::parse("https://example.com").unwrap();
     //     web_scraper.turn_on_chrome_process();
     //     let browser = web_scraper.get_default_browser();
     //     let content = web_scraper
@@ -1485,7 +1483,7 @@ mod tests {
     //         aws_bucket,
     //     );
     //     let browse_action = extra_action;
-    //     let url = Url::parse("http://www.nowgoal.com").unwrap();
+    //     let url = Url::parse("http://example.com").unwrap();
     //     web_scraper.turn_on_chrome_process();
     //     let mut proxy_list = ScraperProxy::generate_proxy().await;
     //     let mut proxy_iter = ScraperProxy::sample_proxy(&mut proxy_list, 1);
@@ -1533,7 +1531,7 @@ mod tests {
     //         aws_bucket,
     //     );
     //     let browse_action = extra_action;
-    //     let url = Url::parse("http://www.nowgoal.com").unwrap();
+    //     let url = Url::parse("http://example.com").unwrap();
     //     web_scraper.turn_on_chrome_process();
     //     let mut private_vpn = PrivateVpn::default();
     //     private_vpn.turn_on_vpn();
@@ -1582,8 +1580,8 @@ mod tests {
     //         &aws_file_io,
     //         aws_bucket,
     //     );
-    //     let url_suffix = ["football/live", "football/results", "football/schedule"];
-    //     let url = Url::parse("https://www.nowgoal.com/").unwrap();
+    //     let url_suffix = ["items/live", "items/results", "items/schedule"];
+    //     let url = Url::parse("https://example.com/").unwrap();
     //     let file = "test_browse{index}.html";
     //     let url_file_list = Vec::from_iter(url_suffix.iter().enumerate().map(|(i, x)| {
     //         UrlFile::new(
@@ -1640,8 +1638,8 @@ mod tests {
     //         &aws_file_io,
     //         aws_bucket,
     //     );
-    //     let url_suffix = ["football/live", "football/results", "football/schedule"];
-    //     let url = Url::parse("http://www.nowgoal.com/").unwrap();
+    //     let url_suffix = ["items/live", "items/results", "items/schedule"];
+    //     let url = Url::parse("http://example.com/").unwrap();
     //     let file = "test_browse{index}.html";
     //     let url_file_list = Vec::from_iter(url_suffix.iter().enumerate().map(|(i, x)| {
     //         UrlFile::new(
@@ -1698,8 +1696,8 @@ mod tests {
     //         &aws_file_io,
     //         aws_bucket,
     //     );
-    //     let url_suffix = ["football/live", "football/results", "football/schedule"];
-    //     let url = Url::parse("http://www.nowgoal.com/").unwrap();
+    //     let url_suffix = ["items/live", "items/results", "items/schedule"];
+    //     let url = Url::parse("http://example.com/").unwrap();
     //     let file = "test_browse{index}.html";
     //     let url_file_list = Vec::from_iter(url_suffix.iter().enumerate().map(|(i, x)| {
     //         UrlFile::new(

@@ -595,7 +595,7 @@ mod tests {
         let logger_name = "test_proxy";
         let logger_path = Path::new(&env::var("SCTYS_PROJECT").unwrap())
             .join("Log")
-            .join("log_sctys_proxy");
+            .join("log_sctys_rust_utilities");
         let project_logger = ProjectLogger::new_logger(&logger_path, logger_name);
         project_logger.set_logger(LevelFilter::Debug);
         project_logger

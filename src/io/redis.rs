@@ -17,7 +17,7 @@ use tokio::time::{sleep, timeout, Instant};
 
 /// URL for a Redis server running locally on the default Redis port.
 ///
-/// Downstream projects can pass this value to [`RedisSnapshotConfig::new`] or
+/// Callers can pass this value to [`RedisSnapshotConfig::new`] or
 /// import it directly as `sctys_rust_utilities::redis::REDIS_PATH`.
 ///
 /// # Examples

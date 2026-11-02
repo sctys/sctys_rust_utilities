@@ -3,15 +3,15 @@ use framework::pipeline::records::{RecordColumns, RecordInput, ScraperRecord};
 use sctys_rust_utilities as framework;
 
 framework::scraper_family! {
-    pub mod stock {
-        keys: SymbolDateKeys, log: SymbolDateLog, document: SymbolDate, input: SymbolDateInput,
-        fields: { Symbol => symbol: String, Date => date: i32 }
+    pub mod dated_records {
+        keys: ItemDateKeys, log: ItemDateLog, document: ItemDate, input: ItemDateInput,
+        fields: { Item => item: String, Date => date: i32 }
     }
 }
 
 trait ColumnAdapter {
     fn get_column_type(self) -> framework::click_house::ClickHouseType;
-    // Match the consumers' by-value adapter contract for Copy column enums.
+    // Exercise a by-value adapter contract for Copy column enums.
     #[allow(clippy::wrong_self_convention)]
     fn is_hash_key(self) -> bool;
 }
@@ -51,16 +51,16 @@ impl ScraperRecordAdapter for adapted::AdaptedRecord {
     }
 }
 framework::scraper_family! {
-    pub mod sports {
-        keys: FixtureKeys, log: FixtureLog, document: Fixture, input: FixtureInput,
-        fields: { Competition => competition: i32, Season => season: i32, Fixture => fixture: i64 }
+    pub mod nested_records {
+        keys: NestedKeys, log: NestedLog, document: NestedRecord, input: NestedInput,
+        fields: { Group => group: i32, Period => period: i32, Item => item: i64 }
     }
 }
 
 #[test]
 fn generated_families_preserve_order_types_keys_and_conversions() {
-    let input = stock::SymbolDateInput {
-        symbol: "ABC".into(),
+    let input = dated_records::ItemDateInput {
+        item: "ABC".into(),
         date: 20261023,
     };
     let mut record = input.record_at(mongodb::bson::DateTime::from_millis(123));
@@ -68,7 +68,7 @@ fn generated_families_preserve_order_types_keys_and_conversions() {
     let document = record.document().unwrap();
     assert_eq!(
         document.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["modified", "data", "symbol", "date"]
+        ["modified", "data", "item", "date"]
     );
     assert_eq!(
         document
@@ -79,53 +79,53 @@ fn generated_families_preserve_order_types_keys_and_conversions() {
     );
     assert_eq!(
         record.query().unwrap(),
-        mongodb::bson::doc! { "symbol": "ABC", "date": 20261023 }
+        mongodb::bson::doc! { "item": "ABC", "date": 20261023 }
     );
     assert_eq!(
-        stock::SymbolDate::index_keys(),
-        ["symbol", "date", "modified"]
+        dated_records::ItemDate::index_keys(),
+        ["item", "date", "modified"]
     );
     assert_eq!(
-        stock::SymbolDateInput::projection(),
-        mongodb::bson::doc! { "symbol": 1, "date": 1 }
+        dated_records::ItemDateInput::projection(),
+        mongodb::bson::doc! { "item": 1, "date": 1 }
     );
     assert_eq!(
         serde_json::to_string(&input).unwrap(),
-        r#"{"symbol":"ABC","date":20261023}"#
+        r#"{"item":"ABC","date":20261023}"#
     );
     let log = input.log_at(100);
     assert_eq!(
-        <stock::SymbolDateLog as clickhouse::Row>::COLUMN_NAMES,
-        ["symbol", "date", "scraped", "insert_time"]
+        <dated_records::ItemDateLog as clickhouse::Row>::COLUMN_NAMES,
+        ["item", "date", "scraped", "insert_time"]
     );
     assert_eq!(
         serde_json::to_value(log).unwrap(),
-        serde_json::json!({"symbol":"ABC","date":20261023,"scraped":false,"insert_time":100})
+        serde_json::json!({"item":"ABC","date":20261023,"scraped":false,"insert_time":100})
     );
-    let first = sports::FixtureInput {
-        competition: 1,
-        season: 2025,
-        fixture: 10,
+    let first = nested_records::NestedInput {
+        group: 1,
+        period: 2025,
+        item: 10,
     };
-    let later = sports::FixtureInput {
-        competition: 1,
-        season: 2026,
-        fixture: 1,
+    let later = nested_records::NestedInput {
+        group: 1,
+        period: 2026,
+        item: 1,
     };
     assert!(first < later);
     let encoded = serde_json::to_string(&first).unwrap();
-    assert_eq!(encoded, r#"{"competition":1,"season":2025,"fixture":10}"#);
+    assert_eq!(encoded, r#"{"group":1,"period":2025,"item":10}"#);
     assert_eq!(
-        serde_json::from_str::<sports::FixtureInput>(&encoded).unwrap(),
+        serde_json::from_str::<nested_records::NestedInput>(&encoded).unwrap(),
         first
     );
-    let columns = sports::FixtureKeys::columns();
+    let columns = nested_records::NestedKeys::columns();
     assert_eq!(
         columns
             .iter()
             .map(|column| column.name.as_str())
             .collect::<Vec<_>>(),
-        ["competition", "season", "fixture"]
+        ["group", "period", "item"]
     );
     assert!(columns.iter().all(|column| column.is_hash_key));
 }
@@ -186,7 +186,7 @@ fn associated_sources_keep_domain_definitions_external() {
             Source
         }
         fn dataset_name(&self) -> String {
-            "fixture".into()
+            "item".into()
         }
         fn is_bookkeeping(&self) -> bool {
             false
@@ -219,7 +219,7 @@ fn transport_sessions_and_async_header_borrows_are_send() {
     fn send<T: Send>() {}
     send::<TransportSession<'static>>();
     send::<HeaderContext<'static, 'static>>();
-    // Compiles the borrowing pattern used by per-run stock/sports provider hooks.
+    // Check mutable per-run session borrows across async hooks.
     async fn header_hook(session: &mut TransportSession<'_>) {
         let context = session.header_context();
         tokio::task::yield_now().await;
@@ -240,25 +240,25 @@ fn ordinary_saved_families_only_decode_inputs_and_share_record_construction() {
     };
     let factory = InputRecordFactory::new(|metadata: &FileMetaInfo<'_>| {
         let mut tokens = FileMetaInfo::extract_elements_from_file_name(metadata.file_name);
-        Ok::<_, RecordError>(stock::SymbolDateInput {
-            symbol: parse_token(tokens.next(), 0)?,
+        Ok::<_, RecordError>(dated_records::ItemDateInput {
+            item: parse_token(tokens.next(), 0)?,
             date: parse_token(tokens.next(), 1)?,
         })
     });
     let metadata = FileMetaInfo {
-        folder_path: std::path::Path::new("/fixture"),
+        folder_path: std::path::Path::new("/item"),
         file_name: "ABC_20261023.json",
         file_date: 20261023,
         download_time: 0,
         modified: std::time::UNIX_EPOCH + std::time::Duration::from_millis(123),
     };
     let record = factory.decode(&metadata, "payload".into()).unwrap();
-    assert_eq!(record.symbol, "ABC");
+    assert_eq!(record.item, "ABC");
     assert_eq!(record.date, 20261023);
     assert_eq!(record.modified.timestamp_millis(), 123);
     assert_eq!(record.data, "payload");
     assert_eq!(
-        <stock::SymbolDateKeys as strum::VariantArray>::VARIANTS.len(),
+        <dated_records::ItemDateKeys as strum::VariantArray>::VARIANTS.len(),
         2
     );
 }

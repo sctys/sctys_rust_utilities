@@ -14,6 +14,7 @@ pub mod records;
 pub mod reporting;
 pub mod runner;
 pub mod scrape;
+pub mod scrape_log;
 pub mod selection;
 pub mod sequence;
 pub mod storage;

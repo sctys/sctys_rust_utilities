@@ -79,8 +79,8 @@ mod tests {
     #[test]
     fn test_legacy_identifiers() {
         for (input, expected) in [
-            ("Eightbo", "eightbo"),
-            ("Trading212Price", "trading212_price"),
+            ("Example", "example"),
+            ("Sensor212Value", "sensor212_value"),
             ("DatePage", "date_page"),
             ("ETFPrice", "etfprice"),
             ("A1B2C", "a1_b2_c"),

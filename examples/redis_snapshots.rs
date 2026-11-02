@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn worker(client: &RedisSnapshotClient) -> Result<(), Box<dyn std::error::Error>> {
-    // Replicas share this group. A separate downstream application uses a different group.
+    // Replicas share this group. A separate application uses a different group.
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
     loop {

@@ -1317,8 +1317,8 @@ mod tests {
     #[test]
     fn test_site_host_extracts_domains() {
         assert_eq!(
-            Pool::site_host("https://oddspedia.com/api/v1/getOddsMovements?matchId=1"),
-            Some("oddspedia.com")
+            Pool::site_host("https://service.example/api/v1/getItems?itemId=1"),
+            Some("service.example")
         );
         assert_eq!(
             Pool::site_host("https://sub.site.co.uk/path?q=1"),
@@ -1329,7 +1329,7 @@ mod tests {
 
     fn proxy_for(address: &str, port: u32) -> PersistedClearance {
         PersistedClearance {
-            site_host: "oddspedia.com".to_owned(),
+            site_host: "service.example".to_owned(),
             proxy_address: address.to_owned(),
             port,
             user_agent: "ua".to_owned(),
@@ -1389,17 +1389,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            Pool::storage_key(Pool::CLEARANCE_KEY_PREFIX, "oddspedia.com", &proxy),
-            "cf_clearance:oddspedia.com:10.0.0.1:8080"
+            Pool::storage_key(Pool::CLEARANCE_KEY_PREFIX, "service.example", &proxy),
+            "cf_clearance:service.example:10.0.0.1:8080"
         );
         assert_eq!(
-            Pool::storage_key(Pool::SOLVE_LEASE_KEY_PREFIX, "oddspedia.com", &proxy),
-            "cf_solve_lease:oddspedia.com:10.0.0.1:8080"
+            Pool::storage_key(Pool::SOLVE_LEASE_KEY_PREFIX, "service.example", &proxy),
+            "cf_solve_lease:service.example:10.0.0.1:8080"
         );
         let other_site = Pool::storage_key(Pool::CLEARANCE_KEY_PREFIX, "other.com", &proxy);
         assert_ne!(
             other_site,
-            Pool::storage_key(Pool::CLEARANCE_KEY_PREFIX, "oddspedia.com", &proxy)
+            Pool::storage_key(Pool::CLEARANCE_KEY_PREFIX, "service.example", &proxy)
         );
         assert_eq!(
             Pool::storage_key("prefix", "site", &proxy),

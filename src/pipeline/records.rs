@@ -433,13 +433,12 @@ macro_rules! scraper_family {
     };
 }
 
-/// Generates a record family and the standard adapters used by stock and
-/// sports common crates. Domain-specific filename decoders remain caller-owned.
+/// Generates a record family and adapters for caller-supplied traits.
+/// Domain-specific filename decoders remain caller-owned.
 ///
-/// The adapter traits must provide the same minimal contract as
-/// `SourceDatasetColumn`, `ScraperLog`, `InputStruct`, and `ScraperStruct` in
-/// the application crates. Paths are supplied by the caller, so this macro
-/// does not depend on any application crate.
+/// The caller supplies trait paths for column metadata, log state, input
+/// conversion, and record timestamps. These traits must expose the methods
+/// implemented by the generated adapters; no application crate is required.
 #[macro_export]
 macro_rules! scraper_family_with_adapters {
     (
