@@ -5,9 +5,78 @@
 //! logs after their scraped records have been persisted. This buffer is not a
 //! durable queue: cancellation or process termination can lose pending logs.
 
-use super::parse::RowSink;
-use crate::click_house::ClickHouse;
-use std::{collections::HashSet, future::Future};
+use super::{parse::RowSink, storage::ClickHouseSink};
+use crate::{click_house::ClickHouse, logger::ProjectLogger};
+use clickhouse::Row;
+use serde::Serialize;
+use std::{collections::HashSet, future::Future, time::Duration};
+
+/// Flushes ready scraper logs, or a final remainder when `force` is true.
+///
+/// Network errors and timeouts pause the caller until storage recovers, using
+/// delays of 1, 2, 4, 8, 16, then 30 seconds between attempts. Other errors are
+/// returned immediately. Only the retained log batch is retried; callers must
+/// enqueue logs once, after persisting their response records.
+///
+/// Ambiguous writes can duplicate rows, so workflow-owned deduplication remains
+/// necessary. Cancelling this future retains rows only while the batch remains
+/// alive; this helper does not provide durable recovery after process exit.
+///
+/// # Errors
+/// Returns non-network ClickHouse insertion errors without retrying them.
+pub async fn flush_clickhouse_logs<R>(
+    logs: &mut ScraperLogBatch<R>,
+    force: bool,
+    sink: &mut ClickHouseSink<'_, '_>,
+    logger: &ProjectLogger,
+) -> Result<(), clickhouse::error::Error>
+where
+    R: Serialize + Row + std::fmt::Debug + Send + Sync,
+{
+    let table = sink.table.clone();
+    let retries = flush_logs_with_retry(logs, force, sink, |attempt, error, delay| {
+        logger.log_warn(&format!(
+            "Unable to flush scraper logs to {table} (attempt {attempt}); scraping for this module is paused, retrying in {delay:?}: {error:?}"
+        ));
+    })
+    .await?;
+    if retries > 0 {
+        logger.log_info(&format!(
+            "Flushed scraper logs to {table} after {retries} retries; resuming scraping"
+        ));
+    }
+    Ok(())
+}
+
+async fn flush_logs_with_retry<R: Sync, S: RowSink<R, Error = clickhouse::error::Error>>(
+    logs: &mut ScraperLogBatch<R>,
+    force: bool,
+    sink: &mut S,
+    mut on_retry: impl FnMut(usize, &clickhouse::error::Error, Duration) + Send,
+) -> Result<usize, clickhouse::error::Error> {
+    if logs.is_empty() || (!force && !logs.is_ready()) {
+        return Ok(0);
+    }
+    let mut delay = Duration::from_secs(1);
+    let mut retries = 0usize;
+    loop {
+        match logs.flush(sink).await {
+            Ok(()) => return Ok(retries),
+            Err(error)
+                if matches!(
+                    error,
+                    clickhouse::error::Error::Network(_) | clickhouse::error::Error::TimedOut
+                ) =>
+            {
+                retries = retries.saturating_add(1);
+                on_retry(retries, &error, delay);
+                tokio::time::sleep(delay).await;
+                delay = delay.saturating_mul(2).min(Duration::from_secs(30));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
 
 /// Identifies the table whose final deduplication failed.
 #[derive(Debug, thiserror::Error)]
@@ -179,7 +248,7 @@ impl<R: Sync> ScraperLogBatch<R> {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::{cell::RefCell, future::ready};
+    use std::{cell::RefCell, collections::VecDeque, future::ready};
 
     #[tokio::test]
     async fn test_group_waits_for_all_jobs_and_flushes_then_deduplicates_once() {
@@ -358,5 +427,160 @@ mod tests {
         let mut immediate = ScraperLogBatch::new(0);
         immediate.push(1);
         assert!(immediate.is_ready());
+    }
+
+    #[derive(Default)]
+    struct LogSink {
+        errors: VecDeque<clickhouse::error::Error>,
+        attempts: Vec<Vec<u32>>,
+    }
+
+    #[async_trait]
+    impl RowSink<u32> for LogSink {
+        type Error = clickhouse::error::Error;
+
+        async fn insert(&mut self, rows: &[u32]) -> Result<(), Self::Error> {
+            self.attempts.push(rows.to_vec());
+            match self.errors.pop_front() {
+                Some(error) => Err(error),
+                None => Ok(()),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_retry_flush_respects_threshold_and_forces_final_remainder() {
+        let mut logs = ScraperLogBatch::new(2);
+        logs.push(42);
+        let mut sink = LogSink::default();
+        flush_logs_with_retry(&mut logs, false, &mut sink, |_, _, _| {})
+            .await
+            .unwrap();
+        assert!(sink.attempts.is_empty());
+        assert!(!logs.is_empty());
+        flush_logs_with_retry(&mut logs, true, &mut sink, |_, _, _| {})
+            .await
+            .unwrap();
+        assert_eq!(sink.attempts, [vec![42]]);
+        assert!(logs.is_empty());
+    }
+
+    fn connection_error() -> clickhouse::error::Error {
+        clickhouse::error::Error::Network(Box::new(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "connection refused",
+        )))
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_log_flush_recovers_without_losing_or_reenqueueing_rows() {
+        let mut logs = ScraperLogBatch::new(2);
+        logs.extend([1, 2, 3]);
+        let mut sink = LogSink {
+            errors: [connection_error(), clickhouse::error::Error::TimedOut].into(),
+            ..LogSink::default()
+        };
+        let mut retries = Vec::new();
+        flush_logs_with_retry(&mut logs, true, &mut sink, |attempt, _, _| {
+            retries.push(attempt);
+        })
+        .await
+        .unwrap();
+        assert_eq!(retries, [1, 2]);
+        assert_eq!(sink.attempts, vec![vec![1, 2, 3]; 3]);
+        assert!(logs.is_empty());
+        // A later boundary/final flush must not write the successful batch again.
+        flush_logs_with_retry(&mut logs, true, &mut sink, |_, _, _| {
+            panic!("empty batch must not retry");
+        })
+        .await
+        .unwrap();
+        assert_eq!(sink.attempts.len(), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_log_flush_survives_prolonged_outage_and_caps_backoff() {
+        let mut logs = ScraperLogBatch::new(1);
+        logs.push(42);
+        let mut sink = LogSink {
+            errors: (0..12).map(|_| connection_error()).collect(),
+            ..LogSink::default()
+        };
+        let start = tokio::time::Instant::now();
+        let mut delays = Vec::new();
+        let retries = flush_logs_with_retry(&mut logs, true, &mut sink, |_, _, delay| {
+            delays.push(delay.as_secs())
+        })
+        .await
+        .unwrap();
+        assert_eq!(retries, 12);
+        assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30, 30, 30, 30, 30, 30]);
+        assert_eq!(start.elapsed(), Duration::from_secs(241));
+        assert_eq!(sink.attempts, vec![vec![42]; 13]);
+        assert!(logs.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_cancelling_wait_retains_pending_batch() {
+        let mut logs = ScraperLogBatch::new(1);
+        logs.push(42);
+        let mut sink = LogSink {
+            errors: [connection_error()].into(),
+            ..LogSink::default()
+        };
+        let result = tokio::time::timeout(
+            Duration::from_millis(500),
+            flush_logs_with_retry(&mut logs, true, &mut sink, |_, _, _| {}),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(sink.attempts, [vec![42]]);
+        assert!(!logs.is_empty());
+        flush_logs_with_retry(&mut logs, true, &mut sink, |_, _, _| {})
+            .await
+            .unwrap();
+        assert_eq!(sink.attempts.last(), Some(&vec![42]));
+        assert!(logs.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_permanent_error_after_network_failures_preserves_batch() {
+        let mut logs = ScraperLogBatch::new(1);
+        logs.push(42);
+        let mut sink = LogSink {
+            errors: [
+                connection_error(),
+                clickhouse::error::Error::BadResponse("access denied".into()),
+            ]
+            .into(),
+            ..LogSink::default()
+        };
+        let error = flush_logs_with_retry(&mut logs, true, &mut sink, |_, _, _| {})
+            .await
+            .unwrap_err();
+        assert!(matches!(error, clickhouse::error::Error::BadResponse(_)));
+        assert_eq!(sink.attempts, vec![vec![42]; 2]);
+        assert!(!logs.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_log_flush_does_not_retry_database_errors() {
+        let mut logs = ScraperLogBatch::new(1);
+        logs.push(42);
+        let mut sink = LogSink {
+            errors: [clickhouse::error::Error::BadResponse(
+                "unknown table".into(),
+            )]
+            .into(),
+            ..LogSink::default()
+        };
+        let error = flush_logs_with_retry(&mut logs, true, &mut sink, |_, _, _| {
+            panic!("database errors must fail immediately");
+        })
+        .await
+        .unwrap_err();
+        assert!(matches!(error, clickhouse::error::Error::BadResponse(_)));
+        assert_eq!(sink.attempts, [vec![42]]);
+        assert!(!logs.is_empty());
     }
 }

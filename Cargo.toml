@@ -48,6 +48,9 @@ toml = "0.5"
 tqdm = "0.6"
 walkdir = "2.4"
 
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+
 [profile.dev]
 debug = 0
 incremental = false
