@@ -1,3 +1,4 @@
+pub mod fixture_mapping;
 pub mod io;
 pub mod logging;
 pub mod messenger;

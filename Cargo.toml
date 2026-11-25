@@ -19,7 +19,7 @@ byte-unit = "4.0.18"
 bzip2 = "0.4"
 chrono = "0.4"
 chrono-tz = "0.8"
-clickhouse = {version = "0.13", features = ["inserter"]}
+clickhouse = {version = "0.13", features = ["inserter", "uuid"]}
 flate2 = "1"
 futures = "0.3"
 fxhash = "0.2"
@@ -39,14 +39,17 @@ sea-query = { version = "0.32", features = ["thread-safe"] }
 serde = "1.0.193"
 serde_derive = "1.0.193"
 serde_json = "1.0"
+sha2 = "0.10"
 strum = "0.27"
 strum_macros = "0.27"
+unicode-normalization = "0.1.25"
 tar = "0.4"
 thiserror = "2"
 tokio = {version = "1", features = ["full"]}
 toml = "0.5"
 tqdm = "0.6"
 walkdir = "2.4"
+uuid = { version = "1.19", features = ["v5", "serde"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
