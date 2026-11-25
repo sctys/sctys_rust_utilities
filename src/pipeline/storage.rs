@@ -37,6 +37,7 @@ use mongodb::{
     Collection, Cursor,
 };
 use serde::de::DeserializeOwned;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 /// Bounds are explicit because existing row checks and exports use different
@@ -236,6 +237,14 @@ impl TableStore<'_, '_> {
             .await?;
         usize::try_from(count).map_err(|error| clickhouse::error::Error::Custom(error.to_string()))
     }
+    /// Runs a dataset write after checking its existing row count, then returns
+    /// the row count after the write has completed.
+    pub async fn with_row_counts<F>(&self, write: F) -> clickhouse::error::Result<(usize, usize)>
+    where
+        F: Future<Output = clickhouse::error::Result<()>>,
+    {
+        run_with_row_counts(|| self.exists(), || self.count(), || write).await
+    }
     pub async fn query<R: DeserializeOwned + Row + std::fmt::Debug>(
         &self,
         query: &str,
@@ -304,6 +313,25 @@ impl TableStore<'_, '_> {
             name,
         )
     }
+}
+
+async fn run_with_row_counts<E, Exists, ExistsFuture, Count, CountFuture, Write, WriteFuture>(
+    mut exists: Exists,
+    mut count: Count,
+    write: Write,
+) -> Result<(usize, usize), E>
+where
+    Exists: FnMut() -> ExistsFuture,
+    ExistsFuture: Future<Output = Result<bool, E>>,
+    Count: FnMut() -> CountFuture,
+    CountFuture: Future<Output = Result<usize, E>>,
+    Write: FnOnce() -> WriteFuture,
+    WriteFuture: Future<Output = Result<(), E>>,
+{
+    let original_count = if exists().await? { count().await? } else { 0 };
+    write().await?;
+    let new_count = count().await?;
+    Ok((original_count, new_count))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -492,6 +520,101 @@ pub async fn import_tables(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        collections::VecDeque,
+        sync::{Arc, Mutex},
+    };
+
+    #[tokio::test]
+    async fn test_counted_write_uses_zero_when_table_is_missing() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let counts = Arc::new(Mutex::new(VecDeque::from([Ok(7_usize)])));
+        let exists_events = Arc::clone(&events);
+        let count_events = Arc::clone(&events);
+        let count_values = Arc::clone(&counts);
+        let write_events = Arc::clone(&events);
+
+        let result = run_with_row_counts(
+            || {
+                exists_events.lock().unwrap().push("exists");
+                async { Ok::<_, String>(false) }
+            },
+            move || {
+                count_events.lock().unwrap().push("count");
+                let value = count_values.lock().unwrap().pop_front().unwrap();
+                async move { value }
+            },
+            || {
+                write_events.lock().unwrap().push("write");
+                async { Ok::<_, String>(()) }
+            },
+        )
+        .await;
+
+        assert_eq!(result, Ok((0, 7)));
+        assert_eq!(*events.lock().unwrap(), ["exists", "write", "count"]);
+    }
+
+    #[tokio::test]
+    async fn test_counted_write_stops_after_each_failed_stage() {
+        for failure in ["exists", "count_before", "write", "count_after"] {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let counts = Arc::new(Mutex::new(VecDeque::from([
+                if failure == "count_before" {
+                    Err("count failed".to_owned())
+                } else {
+                    Ok(4_usize)
+                },
+                if failure == "count_after" {
+                    Err("count failed".to_owned())
+                } else {
+                    Ok(9_usize)
+                },
+            ])));
+            let exists_events = Arc::clone(&events);
+            let count_events = Arc::clone(&events);
+            let count_values = Arc::clone(&counts);
+            let write_events = Arc::clone(&events);
+
+            let result = run_with_row_counts(
+                move || {
+                    exists_events.lock().unwrap().push("exists");
+                    let exists_result = if failure == "exists" {
+                        Err("existence failed".to_owned())
+                    } else {
+                        Ok(true)
+                    };
+                    async move { exists_result }
+                },
+                move || {
+                    count_events.lock().unwrap().push("count");
+                    let value = count_values.lock().unwrap().pop_front().unwrap();
+                    async move { value }
+                },
+                move || {
+                    write_events.lock().unwrap().push("write");
+                    let write_result = if failure == "write" {
+                        Err("write failed".to_owned())
+                    } else {
+                        Ok(())
+                    };
+                    async move { write_result }
+                },
+            )
+            .await;
+
+            assert!(result.is_err(), "expected {failure} to fail");
+            let expected = match failure {
+                "exists" => ["exists"].as_slice(),
+                "count_before" => ["exists", "count"].as_slice(),
+                "write" => ["exists", "count", "write"].as_slice(),
+                "count_after" => ["exists", "count", "write", "count"].as_slice(),
+                _ => unreachable!(),
+            };
+            assert_eq!(*events.lock().unwrap(), expected);
+        }
+    }
+
     #[test]
     fn test_explicit_window_boundaries() {
         let mut window = TimeWindow {

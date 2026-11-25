@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use std::{
     fs, io,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 pub fn remove_stale_staging(path: &Path) -> io::Result<()> {
@@ -138,14 +139,31 @@ pub async fn run_archive<B: ArchiveOperations>(
     backend: &mut B,
     cleanup: bool,
 ) -> Result<(), ArchiveFailure<B::Error>> {
+    run_archive_with_observer(backend, cleanup, |_, _| {}).await
+}
+
+pub async fn run_archive_with_observer<B, F>(
+    backend: &mut B,
+    cleanup: bool,
+    mut observe: F,
+) -> Result<(), ArchiveFailure<B::Error>>
+where
+    B: ArchiveOperations,
+    F: FnMut(ArchiveStage, Duration),
+{
+    let started = Instant::now();
     backend.create().await.map_err(|source| ArchiveFailure {
         stage: ArchiveStage::Create,
         source,
     })?;
+    observe(ArchiveStage::Create, started.elapsed());
+    let started = Instant::now();
     backend.upload().await.map_err(|source| ArchiveFailure {
         stage: ArchiveStage::Upload,
         source,
     })?;
+    observe(ArchiveStage::Upload, started.elapsed());
+    let started = Instant::now();
     backend
         .archive_local()
         .await
@@ -153,11 +171,14 @@ pub async fn run_archive<B: ArchiveOperations>(
             stage: ArchiveStage::ArchiveLocal,
             source,
         })?;
+    observe(ArchiveStage::ArchiveLocal, started.elapsed());
     if cleanup {
+        let started = Instant::now();
         backend.cleanup().await.map_err(|source| ArchiveFailure {
             stage: ArchiveStage::Cleanup,
             source,
         })?;
+        observe(ArchiveStage::Cleanup, started.elapsed());
     }
     Ok(())
 }
@@ -371,6 +392,99 @@ pub fn discover_import_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    struct FakeArchiveOperations {
+        events: Arc<Mutex<Vec<ArchiveStage>>>,
+        fail_at: Option<ArchiveStage>,
+    }
+
+    impl FakeArchiveOperations {
+        async fn record(&mut self, stage: ArchiveStage) -> Result<(), &'static str> {
+            self.events.lock().unwrap().push(stage);
+            if self.fail_at == Some(stage) {
+                Err("injected archive failure")
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ArchiveOperations for FakeArchiveOperations {
+        type Error = &'static str;
+
+        async fn create(&mut self) -> Result<(), Self::Error> {
+            self.record(ArchiveStage::Create).await
+        }
+        async fn upload(&mut self) -> Result<(), Self::Error> {
+            self.record(ArchiveStage::Upload).await
+        }
+        async fn archive_local(&mut self) -> Result<(), Self::Error> {
+            self.record(ArchiveStage::ArchiveLocal).await
+        }
+        async fn cleanup(&mut self) -> Result<(), Self::Error> {
+            self.record(ArchiveStage::Cleanup).await
+        }
+    }
+
+    #[tokio::test]
+    async fn test_run_archive_observes_each_completed_stage_in_order() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut backend = FakeArchiveOperations {
+            events: Arc::clone(&events),
+            fail_at: None,
+        };
+        let mut observed = Vec::new();
+
+        run_archive_with_observer(&mut backend, false, |stage, _| observed.push(stage))
+            .await
+            .unwrap();
+
+        let expected = [
+            ArchiveStage::Create,
+            ArchiveStage::Upload,
+            ArchiveStage::ArchiveLocal,
+        ];
+        assert_eq!(*events.lock().unwrap(), expected);
+        assert_eq!(observed, expected);
+    }
+
+    #[tokio::test]
+    async fn test_run_archive_stops_at_the_first_failed_stage() {
+        for failure in [
+            ArchiveStage::Create,
+            ArchiveStage::Upload,
+            ArchiveStage::ArchiveLocal,
+        ] {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let mut backend = FakeArchiveOperations {
+                events: Arc::clone(&events),
+                fail_at: Some(failure),
+            };
+            let mut observed = Vec::new();
+
+            let error =
+                run_archive_with_observer(&mut backend, false, |stage, _| observed.push(stage))
+                    .await
+                    .unwrap_err();
+
+            assert_eq!(error.stage, failure);
+            let completed = match failure {
+                ArchiveStage::Create => vec![],
+                ArchiveStage::Upload => vec![ArchiveStage::Create],
+                ArchiveStage::ArchiveLocal => {
+                    vec![ArchiveStage::Create, ArchiveStage::Upload]
+                }
+                ArchiveStage::Cleanup => unreachable!(),
+            };
+            let mut attempted = completed.clone();
+            attempted.push(failure);
+            assert_eq!(*events.lock().unwrap(), attempted);
+            assert_eq!(observed, completed);
+        }
+    }
+
     struct Temp(PathBuf);
     impl Temp {
         fn new() -> Self {

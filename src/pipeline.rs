@@ -9,6 +9,7 @@
 pub mod archive;
 pub mod export;
 pub mod metadata;
+pub mod mongo_retry;
 pub mod parse;
 pub mod records;
 pub mod reporting;

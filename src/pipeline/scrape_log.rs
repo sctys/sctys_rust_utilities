@@ -9,7 +9,41 @@ use super::{parse::RowSink, storage::ClickHouseSink};
 use crate::{click_house::ClickHouse, logger::ProjectLogger};
 use clickhouse::Row;
 use serde::Serialize;
-use std::{collections::HashSet, future::Future, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    sync::{Arc, Mutex, OnceLock},
+    time::Duration,
+};
+use tokio::sync::Semaphore;
+
+const LOG_TABLE_MAX_CONCURRENT_OPERATIONS: usize = 1;
+static LOG_TABLE_SEMAPHORES: OnceLock<Mutex<HashMap<String, Arc<Semaphore>>>> = OnceLock::new();
+
+/// Error returned when the process-wide scraper-log semaphore registry is poisoned.
+#[derive(Debug, thiserror::Error)]
+#[error("scraper-log semaphore registry lock was poisoned")]
+pub struct LogTableSemaphoreError;
+
+/// Gets the process-wide semaphore for a scraper-log table.
+///
+/// Callers should hold an acquired permit while creating or writing to the table.
+/// Requests for the same table share a single one-permit semaphore.
+///
+/// # Errors
+/// Returns [`LogTableSemaphoreError`] if another thread panicked while holding
+/// the registry lock.
+pub fn log_table_semaphore(
+    table: impl Into<String>,
+) -> Result<Arc<Semaphore>, LogTableSemaphoreError> {
+    let mut semaphores = LOG_TABLE_SEMAPHORES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| LogTableSemaphoreError)?;
+    Ok(Arc::clone(semaphores.entry(table.into()).or_insert_with(
+        || Arc::new(Semaphore::new(LOG_TABLE_MAX_CONCURRENT_OPERATIONS)),
+    )))
+}
 
 /// Flushes ready scraper logs, or a final remainder when `force` is true.
 ///
