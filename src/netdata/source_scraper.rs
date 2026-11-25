@@ -1502,21 +1502,35 @@ async fn navigate_with_clearance_persistence(
             Ok(Some(record_json)) => {
                 match serde_json::from_str::<PersistedJsClearance>(&record_json) {
                     Ok(record) => {
-                        let mut cookies = HashMap::new();
-                        cookies.insert(record.cookie_name.clone(), record.cookie_value.clone());
-                        match playwright.set_cookies_for_url(context_id, cookies, url) {
-                            Ok(()) => {
-                                let debug_log = format!(
-                                    "Hydrated {} cookie for {url} from redis",
-                                    record.cookie_name
-                                );
-                                source_scraper.logger.log_debug(&debug_log);
-                                hydrated_clearance = Some(record.cookie_value);
-                            }
-                            Err(e) => {
-                                let warn_str =
-                                    format!("Unable to hydrate persisted cookies for {url}. {e}");
-                                source_scraper.logger.log_warn(&warn_str);
+                        // Redis TTLs only bound records written under the
+                        // current policy. Check age against the module's TTL
+                        // too, so records left by an older, longer TTL are not
+                        // hydrated and turned into a guaranteed 403.
+                        let age_secs = Utc::now().timestamp() - record.persisted_at;
+                        if age_secs > clearance_persistence_ttl.as_secs() as i64 {
+                            let debug_log = format!(
+                                "Ignoring expired persisted cf_clearance for {url} (age {age_secs}s)"
+                            );
+                            source_scraper.logger.log_debug(&debug_log);
+                            let _ = kv.delete(storage_key).await;
+                        } else {
+                            let mut cookies = HashMap::new();
+                            cookies.insert(record.cookie_name.clone(), record.cookie_value.clone());
+                            match playwright.set_cookies_for_url(context_id, cookies, url) {
+                                Ok(()) => {
+                                    let debug_log = format!(
+                                        "Hydrated {} cookie for {url} from redis",
+                                        record.cookie_name
+                                    );
+                                    source_scraper.logger.log_debug(&debug_log);
+                                    hydrated_clearance = Some(record.cookie_value);
+                                }
+                                Err(e) => {
+                                    let warn_str = format!(
+                                        "Unable to hydrate persisted cookies for {url}. {e}"
+                                    );
+                                    source_scraper.logger.log_warn(&warn_str);
+                                }
                             }
                         }
                     }
